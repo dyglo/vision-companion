@@ -8,3 +8,6 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+- Object detection runs in the browser (onnxruntime-web, YOLO26n hosted as a Lovable asset); explanations go through the `askVision` server function — keeps keys server-side and taps instant.
+- Memories live in browser localStorage (`src/lib/memory.ts`) — MVP has no accounts.
