@@ -42,14 +42,14 @@ export async function detect(img: HTMLImageElement, minScore = 0.3): Promise<Det
   const px = ctx.getImageData(0, 0, S, S).data;
   const data = new Float32Array(3 * S * S);
   for (let i = 0; i < S * S; i++) {
-    data[i] = px[i * 4] / 255;
-    data[i + S * S] = px[i * 4 + 1] / 255;
-    data[i + 2 * S * S] = px[i * 4 + 2] / 255;
+    data[i] = px[i * 4]! / 255;
+    data[i + S * S] = px[i * 4 + 1]! / 255;
+    data[i + 2 * S * S] = px[i * 4 + 2]! / 255;
   }
   const input = new ort.Tensor("float32", data, [1, 3, S, S]);
-  const out = await session.run({ [session.inputNames[0]]: input });
-  const logits = out["logits"].data as Float32Array;
-  const boxes = out["pred_boxes"].data as Float32Array;
+  const out = await session.run({ [session.inputNames[0]!]: input });
+  const logits = out["logits"]!.data as Float32Array;
+  const boxes = out["pred_boxes"]!.data as Float32Array;
   const n = boxes.length / 4;
   const C = logits.length / n;
   const res: Detection[] = [];
@@ -57,7 +57,7 @@ export async function detect(img: HTMLImageElement, minScore = 0.3): Promise<Det
     let best = -Infinity;
     let bi = 0;
     for (let k = 0; k < C; k++) {
-      const v = logits[i * C + k];
+      const v = logits[i * C + k]!;
       if (v > best) {
         best = v;
         bi = k;
@@ -65,7 +65,7 @@ export async function detect(img: HTMLImageElement, minScore = 0.3): Promise<Det
     }
     const score = sigmoid(best);
     if (score < minScore) continue;
-    const [cx, cy, w, h] = [boxes[i * 4], boxes[i * 4 + 1], boxes[i * 4 + 2], boxes[i * 4 + 3]];
+    const cx = boxes[i * 4]!, cy = boxes[i * 4 + 1]!, w = boxes[i * 4 + 2]!, h = boxes[i * 4 + 3]!;
     res.push({
       label: LABELS[bi] ?? "object",
       score,
