@@ -132,6 +132,23 @@
   --sidebar-ring: oklch(0.551 0.027 264.364);
 }
 
+:root {
+  --background: oklch(0.14 0.005 260);
+  --foreground: oklch(0.97 0.003 90);
+  --muted-foreground: oklch(0.78 0.01 90);
+  --primary: oklch(0.86 0.06 220);
+  --primary-foreground: oklch(0.15 0.01 260);
+  --border: oklch(1 0 0 / 18%);
+  --input: oklch(1 0 0 / 25%);
+  --scrim: oklch(0 0 0 / 0.45);
+  --text-shadow-soft: 0 1px 12px oklch(0 0 0 / 0.55);
+}
+
+@theme inline {
+  --color-scrim: var(--scrim);
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+}
+
 @layer base {
   * {
     border-color: var(--color-border);
@@ -140,5 +157,11 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
   }
+}
+
+@utility text-soft-shadow {
+  text-shadow: var(--text-shadow-soft);
 }

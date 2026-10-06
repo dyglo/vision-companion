@@ -18,7 +18,7 @@ function load() {
   if (!sessionPromise) {
     sessionPromise = (async () => {
       const ort = await import("onnxruntime-web");
-      ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/";
+      ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/";
       const session = await ort.InferenceSession.create(modelAsset.url, {
         executionProviders: ["wasm"],
       });
