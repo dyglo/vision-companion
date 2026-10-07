@@ -13,6 +13,8 @@ import {
   conversationMarkers,
   retainMarkers,
   sameObjectBox,
+  cropFullResolution,
+  toggleComparison,
   clampBox,
   relevantPrevious,
   padBox,
@@ -20,6 +22,7 @@ import {
   type Marker,
   type Selection,
   type ThreadEntry,
+  type CanvasTool,
 } from "@/lib/workspace";
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -70,6 +73,25 @@ export function Index() {
   const [removedMarkers, setRemovedMarkers] = useState<string[]>([]);
   const [focusedMarker, setFocusedMarker] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
+  const [tool, setTool] = useState<CanvasTool>("select");
+  const toolRef = useRef<CanvasTool>("select");
+  const [comparisons, setComparisons] = useState<Selection[]>([]);
+  const [zoomBox, setZoomBox] = useState<Box | null>(null);
+  const [toolMarkers, setToolMarkers] = useState<Marker[]>([]);
+  const toolMarkersRef = useRef<Marker[]>([]);
+  const knownMarkers = () => [
+    ...new Map(
+      [...toolMarkersRef.current, ...conversationMarkers(threadRef.current)].map((marker) => [
+        marker.key,
+        marker,
+      ]),
+    ).values(),
+  ];
+  const changeTool = (next: CanvasTool) => {
+    toolRef.current = next;
+    setTool(next);
+    if (next !== "compare") setComparisons([]);
+  };
   const imageRef = useRef<HTMLImageElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const generation = useRef(0);
@@ -97,12 +119,17 @@ export function Index() {
     setRemovedMarkers([]);
     setFocusedMarker(null);
     setQuestion("");
+    changeTool("select");
+    setZoomBox(null);
+    toolMarkersRef.current = [];
+    setToolMarkers([]);
   };
   const clearResult = () => {
     setSelection(null);
     setActiveEntry(null);
     setHighlighted(null);
     setFocusedMarker(null);
+    setZoomBox(null);
   };
   const pick = (file?: File | null) => {
     if (!file?.type.startsWith("image/")) return;
@@ -188,11 +215,32 @@ export function Index() {
           setSelection((current) => (current?.key === target.key ? target : current));
         }
       }
+      const inspectionTargets = (
+        entry.comparisons ?? (entry.deepInspection && selected ? [selected] : [])
+      ).map((target) => ({
+        id: target.key,
+        number: target.number,
+        label: target.label ?? "Object",
+        box: target.box,
+        cropBox: padBox(target.box),
+        crop: cropFullResolution(image, padBox(target.box)),
+      }));
+      const crop =
+        entry.deepInspection && selected
+          ? inspectionTargets[0]!.crop
+          : toDataUrl(image, selected ? padBox(selected.box) : null, selected ? 512 : 1280);
+      if (
+        inspectionTargets.reduce((size, target) => size + target.crop.length, crop.length) >
+        64_000_000
+      )
+        throw new Error("Comparison crops are too large. Select smaller regions.");
       const result = await ask({
         data: {
           image: toDataUrl(image, null, 1280),
-          crop: toDataUrl(image, selected ? padBox(selected.box) : null, selected ? 512 : 1280),
-          mode: selected ? "selection" : "scene",
+          crop,
+          mode: entry.comparisons?.length ? "comparison" : selected ? "selection" : "scene",
+          deepInspection: entry.deepInspection ?? false,
+          targets: inspectionTargets,
           detectorLabel: selected?.label ?? null,
           detectorScore: selected?.score ?? null,
           detectorCandidates: candidates
@@ -217,11 +265,11 @@ export function Index() {
       if (epoch !== generation.current || attempts.current.get(entry.id) !== attempt) return;
       const answer = result.answer;
       const registered = answer
-        ? retainMarkers(
-            { ...entry, selection: selected, answer },
-            conversationMarkers(threadRef.current),
-          )
+        ? retainMarkers({ ...entry, selection: selected, answer }, knownMarkers())
         : (threadRef.current.find((item) => item.id === entry.id)?.markers ?? []);
+      if (entry.selection?.custom && entry.markers)
+        for (const marker of entry.markers)
+          if (!registered.some((item) => item.key === marker.key)) registered.unshift(marker);
       const selectedMarker =
         selected && registered.find((marker) => sameObjectBox(marker.box, selected.box));
       const retainedSelection =
@@ -254,12 +302,19 @@ export function Index() {
               },
         ),
       );
-    } catch {
+    } catch (error) {
       if (epoch === generation.current && attempts.current.get(entry.id) === attempt)
         changeThread((items) =>
           items.map((item) =>
             item.id === entry.id
-              ? { ...item, loading: false, error: "Couldn't reach the assistant. Please retry." }
+              ? {
+                  ...item,
+                  loading: false,
+                  error:
+                    error instanceof Error && /crop|image|regions/i.test(error.message)
+                      ? error.message
+                      : "Couldn't reach the assistant. Please retry.",
+                }
               : item,
           ),
         );
@@ -268,6 +323,7 @@ export function Index() {
   const submit = () => {
     const text = question.trim();
     if (!text || !imageRef.current?.naturalWidth) return;
+    if (tool === "compare" && comparisons.length < 2) return;
     const requestedNumber = /(?:#|target\s+|annotation\s+)(\d+)/i.exec(text)?.[1];
     const requested = requestedNumber
       ? conversationMarkers(threadRef.current).find(
@@ -310,6 +366,17 @@ export function Index() {
       selection,
       previous: relevantPrevious(threadRef.current, selection),
       loading: true,
+      ...(tool === "compare"
+        ? {
+            comparisons: [...comparisons],
+            markers: comparisons
+              .map((target) => knownMarkers().find((marker) => marker.key === target.key)!)
+              .filter(Boolean),
+            objectIds: comparisons.map((target) => target.key),
+            selection: null,
+          }
+        : {}),
+      ...(tool === "focus" && selection ? { deepInspection: true } : {}),
     };
     changeThread((items) => [
       ...items,
@@ -332,6 +399,7 @@ export function Index() {
       box: marker.box,
       label: marker.label || null,
       score: marker.score,
+      ...(marker.custom ? { custom: true } : {}),
     };
     setSelection(selected);
     setHighlighted(marker.key);
@@ -354,6 +422,134 @@ export function Index() {
     };
     changeThread((items) => [...items, entry]);
     setActiveEntry(entry.id);
+    void run(entry);
+  };
+  const registerToolMarker = (marker: Marker) => {
+    const existing = knownMarkers().find(
+      (item) => item.key === marker.key || (!marker.custom && sameObjectBox(item.box, marker.box)),
+    );
+    if (existing) return existing;
+    const registered = {
+      ...marker,
+      number: Math.max(0, ...knownMarkers().map((item) => item.number)) + 1,
+    };
+    toolMarkersRef.current = [...toolMarkersRef.current, registered];
+    setToolMarkers(toolMarkersRef.current);
+    return registered;
+  };
+  const toolSelect = (marker: Marker) => {
+    if (toolRef.current === "select") {
+      selectMarker(marker);
+      return;
+    }
+    if (toolRef.current === "draw") return;
+    if (
+      toolRef.current === "compare" &&
+      comparisons.length >= 4 &&
+      !comparisons.some((target) => target.key === marker.key)
+    )
+      return;
+    const registered = registerToolMarker(marker);
+    const target: Selection = {
+      ...registered,
+      label: registered.label || null,
+      score: registered.score,
+    };
+    if (toolRef.current === "compare") {
+      setComparisons((items) => toggleComparison(items, target));
+      return;
+    }
+    setSelection(target);
+    setZoomBox(target.box);
+    const entry: ThreadEntry = {
+      id: crypto.randomUUID(),
+      sender: "assistant",
+      selection: target,
+      deepInspection: true,
+      question:
+        "Inspect this crop in fine detail: read legible labels or serial numbers and describe visible surface condition, texture wear, or defects. Say what cannot be resolved.",
+      previous: relevantPrevious(threadRef.current, target),
+      loading: true,
+      markers: [registered],
+    };
+    changeThread((items) => [...items, entry]);
+    setActiveEntry(entry.id);
+    void run(entry);
+  };
+  const toolTap = async (x: number, y: number) => {
+    if (toolRef.current === "select") {
+      onTap(x, y);
+      return;
+    }
+    if (toolRef.current === "draw") return;
+    const epoch = generation.current,
+      mode = toolRef.current;
+    const visible = markers
+      .filter(
+        (marker) =>
+          x >= marker.box.x &&
+          x <= marker.box.x + marker.box.w &&
+          y >= marker.box.y &&
+          y <= marker.box.y + marker.box.h,
+      )
+      .sort((a, b) => a.box.w * a.box.h - b.box.w * b.box.h)[0];
+    if (visible) {
+      toolSelect(visible);
+      return;
+    }
+    const candidates = await ensureDetections();
+    if (epoch !== generation.current || toolRef.current !== mode) return;
+    const hit = candidates
+      .map((item, index) => ({ item, index }))
+      .filter(
+        ({ item }) => x >= item.x && x <= item.x + item.w && y >= item.y && y <= item.y + item.h,
+      )
+      .sort((a, b) => a.item.w * a.item.h - b.item.w * b.item.h)[0];
+    toolSelect(
+      hit
+        ? {
+            key: `candidate:${hit.index}`,
+            number: 0,
+            box: clampBox(hit.item),
+            label: hit.item.label,
+            score: hit.item.score,
+          }
+        : {
+            key: crypto.randomUUID(),
+            number: 0,
+            box: clampBox({ x: x - 0.08, y: y - 0.08, w: 0.16, h: 0.16 }),
+            label: "",
+            score: 0,
+          },
+    );
+  };
+  const submitRegion = (box: Box, text: string) => {
+    const id = crypto.randomUUID();
+    const marker = registerToolMarker({
+      key: crypto.randomUUID(),
+      number: 0,
+      box: clampBox(box),
+      label: "Custom",
+      score: 0,
+      custom: true,
+      entryId: id,
+    });
+    const target: Selection = { ...marker, custom: true };
+    const entry: ThreadEntry = {
+      id,
+      sender: "assistant",
+      question: text,
+      selection: target,
+      loading: true,
+      markers: [marker],
+    };
+    setSelection(target);
+    changeThread((items) => [
+      ...items,
+      { id: crypto.randomUUID(), sender: "user", question: text, selection: target },
+      entry,
+    ]);
+    setActiveEntry(id);
     void run(entry);
   };
   const onTap = (x: number, y: number) => {
@@ -395,7 +591,11 @@ export function Index() {
           },
     );
   };
-  const markers = conversationMarkers(thread).filter(
+  const markers = [
+    ...new Map(
+      [...toolMarkers, ...conversationMarkers(thread)].map((marker) => [marker.key, marker]),
+    ).values(),
+  ].filter(
     (marker) =>
       !removedMarkers.includes(marker.key) && (!focusedMarker || marker.key === focusedMarker),
   );
@@ -429,6 +629,9 @@ export function Index() {
             highlighted={highlighted}
             detectorState={detectorState}
             question={question}
+            comparisons={comparisons}
+            comparisonMode={tool === "compare"}
+            onClearComparison={() => setComparisons([])}
             onQuestion={setQuestion}
             onSubmit={submit}
             onBack={reset}
@@ -482,11 +685,17 @@ export function Index() {
             key={src}
             src={src}
             imageRef={imageRef}
+            tool={tool}
+            onTool={changeTool}
+            comparisons={comparisons}
+            zoomBox={zoomBox}
+            onEscape={() => setZoomBox(null)}
+            onRegion={submitRegion}
             markers={markers}
             highlighted={highlighted}
             onHighlight={setHighlighted}
-            onMarker={selectMarker}
-            onTap={onTap}
+            onMarker={toolSelect}
+            onTap={(x, y) => void toolTap(x, y)}
             onLoad={() => {}}
             fullView={fullView}
             onFullView={toggleFullView}

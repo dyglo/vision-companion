@@ -1,11 +1,13 @@
 import type { VisionAnswer } from "./vision.functions";
 export type Box = { x: number; y: number; w: number; h: number };
+export type CanvasTool = "select" | "focus" | "compare" | "draw";
 export type Selection = {
   key: string;
   number: number;
   box: Box;
   label: string | null;
   score: number | null;
+  custom?: boolean;
 };
 export type ThreadEntry = {
   id: string;
@@ -15,6 +17,9 @@ export type ThreadEntry = {
   answer?: VisionAnswer | undefined;
   loading?: boolean;
   markers?: Marker[];
+  objectIds?: string[];
+  comparisons?: Selection[];
+  deepInspection?: boolean;
   error?: string | undefined;
   memoryError?: string | undefined;
   previous?: string | null;
@@ -27,7 +32,38 @@ export type Marker = {
   label: string;
   score: number;
   entryId?: string;
+  custom?: boolean;
 };
+
+export function toggleComparison(items: Selection[], target: Selection): Selection[] {
+  if (items.some((item) => item.key === target.key))
+    return items.filter((item) => item.key !== target.key);
+  return items.length < 4 ? [...items, target] : items;
+}
+
+export function cropFullResolution(image: HTMLImageElement, box: Box) {
+  const clipped = clampBox(box);
+  const x = Math.floor(clipped.x * image.naturalWidth);
+  const y = Math.floor(clipped.y * image.naturalHeight);
+  const width = Math.min(
+    image.naturalWidth - x,
+    Math.ceil((clipped.x + clipped.w) * image.naturalWidth) - x,
+  );
+  const height = Math.min(
+    image.naturalHeight - y,
+    Math.ceil((clipped.y + clipped.h) * image.naturalHeight) - y,
+  );
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Couldn't read this image. Please retry.");
+  context.drawImage(image, x, y, width, height, 0, 0, width, height);
+  const crop = canvas.toDataURL("image/png");
+  if (crop.length > 24_000_000)
+    throw new Error("This full-resolution crop is too large. Draw a smaller area to inspect.");
+  return crop;
+}
 export function fitFrame(
   width: number,
   height: number,
@@ -95,6 +131,7 @@ export function answerMarkers(entry: ThreadEntry): Marker[] {
           label: entry.answer?.name ?? entry.selection.label ?? "Object",
           score: entry.answer?.confidence ?? entry.selection.score ?? 0,
           entryId: entry.id,
+          ...(entry.selection.custom ? { custom: true } : {}),
         },
       ]
     : [];
@@ -124,9 +161,9 @@ export function retainMarkers(entry: ThreadEntry, existing: Marker[]): Marker[] 
     answer: entry.answer,
     selection: entry.selection ?? null,
   })) {
-    const match = [...existing, ...assigned].find((marker) =>
-      sameObjectBox(marker.box, candidate.box),
-    );
+    const match =
+      [...existing, ...assigned].find((marker) => marker.key === candidate.key) ??
+      [...existing, ...assigned].find((marker) => sameObjectBox(marker.box, candidate.box));
     const marker = match ?? {
       ...candidate,
       key:

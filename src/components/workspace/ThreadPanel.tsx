@@ -17,6 +17,9 @@ type Props = {
   highlighted: string | null;
   detectorState: string;
   question: string;
+  comparisons: Selection[];
+  comparisonMode: boolean;
+  onClearComparison: () => void;
   onQuestion: (v: string) => void;
   onSubmit: () => void;
   onBack: () => void;
@@ -111,6 +114,19 @@ export function ThreadPanel(props: Props) {
               <p className="break-words text-sm leading-relaxed">{entry.question}</p>
             )}
             {entry.loading && <ThinkingStatus />}
+            {entry.deepInspection && (
+              <p className="mb-2 text-xs text-primary">
+                Deep crop inspection · original resolution
+              </p>
+            )}
+            {entry.comparisons && (
+              <p className="mb-2 text-xs text-primary">
+                Comparison ·{" "}
+                {entry.comparisons
+                  .map((target) => `#${target.number} ${target.label ?? "Object"}`)
+                  .join(", ")}
+              </p>
+            )}
             {entry.error && (
               <div role="status">
                 <p className="text-sm text-destructive">{entry.error}</p>
@@ -141,6 +157,51 @@ export function ThreadPanel(props: Props) {
                 <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-relaxed">
                   {entry.answer.explanation}
                 </p>
+                {!!entry.answer.comparison?.length && (
+                  <div className="mt-4 overflow-x-auto" aria-label="Side-by-side comparison">
+                    <table className="w-full text-left text-xs leading-relaxed">
+                      <thead>
+                        <tr>
+                          <th className="pr-3 pb-2 font-medium">Detail</th>
+                          {entry.answer.comparison.map((item) => (
+                            <th key={item.targetId} className="min-w-36 px-2 pb-2 font-medium">
+                              {item.title}
+                              {entry.comparisons?.find(
+                                (target) => target.key === item.targetId,
+                              ) && (
+                                <span className="ml-1 text-muted-foreground">
+                                  #
+                                  {
+                                    entry.comparisons.find((target) => target.key === item.targetId)
+                                      ?.number
+                                  }
+                                </span>
+                              )}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(
+                          [
+                            ["condition", "Condition & wear"],
+                            ["dimensionsAndStyle", "Dimensions & style"],
+                            ["details", "Findings"],
+                          ] as const
+                        ).map(([field, label]) => (
+                          <tr key={field}>
+                            <th className="pr-3 py-2 align-top font-medium">{label}</th>
+                            {entry.answer?.comparison?.map((item) => (
+                              <td key={item.targetId} className="px-2 py-2 align-top">
+                                {item[field]}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
                 {answerMarkers(entry).length > 0 && (
                   <ol className="mt-4 space-y-1">
                     {answerMarkers(entry).map((marker) => (
@@ -251,7 +312,54 @@ export function ThreadPanel(props: Props) {
           props.onSubmit();
         }}
       >
-        {selection && (
+        {props.comparisonMode && (
+          <div className="mb-2 text-xs text-primary">
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 break-words">
+                Comparing:{" "}
+                {props.comparisons.length
+                  ? props.comparisons
+                      .map(
+                        (target) =>
+                          `#${target.number.toString().padStart(2, "0")} ${target.label ?? "Object"}`,
+                      )
+                      .join(", ")
+                  : "Select 2–4 objects"}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="ml-auto size-7 shrink-0"
+                aria-label="Clear comparison"
+                onClick={props.onClearComparison}
+              >
+                <X />
+              </Button>
+            </div>
+            {props.comparisons.length >= 2 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {[
+                  "Compare condition & wear",
+                  "Compare dimensions and style",
+                  "Which appears newer?",
+                ].map((text) => (
+                  <Button
+                    type="button"
+                    key={text}
+                    variant="outline"
+                    size="sm"
+                    className="h-auto whitespace-normal rounded-full py-1 text-xs"
+                    onClick={() => props.onQuestion(text)}
+                  >
+                    {text}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {selection && !props.comparisonMode && (
           <div className="mb-2 flex items-center gap-2 text-xs text-primary">
             <Target className="size-3 shrink-0" />
             <span className="min-w-0 truncate">
@@ -289,7 +397,9 @@ export function ThreadPanel(props: Props) {
             type="submit"
             size="icon"
             className="mb-2 size-8 rounded-full [&_svg]:size-3.5"
-            disabled={!props.question.trim()}
+            disabled={
+              !props.question.trim() || (props.comparisonMode && props.comparisons.length < 2)
+            }
             aria-label="Ask"
             title="Ask"
           >
