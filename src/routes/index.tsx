@@ -1,12 +1,22 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { ArrowUp, ImagePlus, X } from "lucide-react";
+import { ImagePlus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { detect, type Detection } from "@/lib/detector";
-import { askVision, type VisionAnswer } from "@/lib/vision.functions";
+import { askVision } from "@/lib/vision.functions";
 import { addMemory, loadMemories } from "@/lib/memory";
-
+import { ThreadPanel } from "@/components/workspace/ThreadPanel";
+import { CanvasPanel } from "@/components/workspace/CanvasPanel";
+import {
+  answerMarkers,
+  clampBox,
+  relevantPrevious,
+  type Box,
+  type Marker,
+  type Selection,
+  type ThreadEntry,
+} from "@/lib/workspace";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
@@ -29,10 +39,6 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-type Box = { x: number; y: number; w: number; h: number };
-type Selection = { box: Box; label: string | null; score: number | null };
-type ImageFrame = { left: number; top: number; width: number; height: number };
-
 function toDataUrl(img: HTMLImageElement, box: Box | null, max: number) {
   const sx = box ? box.x * img.naturalWidth : 0;
   const sy = box ? box.y * img.naturalHeight : 0;
@@ -48,197 +54,332 @@ function toDataUrl(img: HTMLImageElement, box: Box | null, max: number) {
   return canvas.toDataURL("image/jpeg", 0.85);
 }
 
-function pad(box: Box, amount: number): Box {
-  const x = Math.max(0, box.x - box.w * amount);
-  const y = Math.max(0, box.y - box.h * amount);
-  return {
-    x,
-    y,
-    w: Math.min(1 - x, box.w * (1 + 2 * amount)),
-    h: Math.min(1 - y, box.h * (1 + 2 * amount)),
-  };
-}
-
-function getImageFrame(img: HTMLImageElement): ImageFrame {
-  const rect = img.getBoundingClientRect();
-  if (!img.naturalWidth || !img.naturalHeight)
-    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
-  const scale = Math.max(rect.width / img.naturalWidth, rect.height / img.naturalHeight);
-  const width = img.naturalWidth * scale;
-  const height = img.naturalHeight * scale;
-  return {
-    left: rect.left + (rect.width - width) / 2,
-    top: rect.top + (rect.height - height) / 2,
-    width,
-    height,
-  };
-}
-
-function clampBox(box: Box): Box {
-  const x = Math.max(0, Math.min(1, box.x));
-  const y = Math.max(0, Math.min(1, box.y));
-  return {
-    x,
-    y,
-    w: Math.max(0.01, Math.min(1 - x, box.w)),
-    h: Math.max(0.01, Math.min(1 - y, box.h)),
-  };
-}
-
 function Index() {
   const [src, setSrc] = useState<string | null>(null);
   const [detections, setDetections] = useState<Detection[]>([]);
-  const [detectorState, setDetectorState] = useState<"idle" | "loading" | "ready" | "failed">(
-    "idle",
-  );
+  const [detectorState, setDetectorState] = useState("idle");
+  const [thread, setThread] = useState<ThreadEntry[]>([]);
+  const threadRef = useRef<ThreadEntry[]>([]);
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [sceneMode, setSceneMode] = useState(false);
-  const [answer, setAnswer] = useState<VisionAnswer | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [activeEntry, setActiveEntry] = useState<string | null>(null);
+  const [highlighted, setHighlighted] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
-  const [memoryState, setMemoryState] = useState<"none" | "offered" | "saved">("none");
-  const [frame, setFrame] = useState<ImageFrame | null>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const requestId = useRef(0);
+  const generation = useRef(0);
+  const detectionRun = useRef(0);
+  const sourceRef = useRef<string | null>(null);
+  const attempts = useRef(new Map<string, number>());
   const ask = useServerFn(askVision);
-
-  const clearResult = () => {
-    requestId.current += 1;
-    setSelection(null);
-    setSceneMode(false);
-    setAnswer(null);
-    setError(null);
-    setLoading(false);
-    setQuestion("");
-    setMemoryState("none");
+  const changeThread = (fn: (items: ThreadEntry[]) => ThreadEntry[]) => {
+    threadRef.current = fn(threadRef.current);
+    setThread(threadRef.current);
   };
-
-  const pick = (file?: File | null) => {
-    if (!file?.type.startsWith("image/")) return;
-    if (src) URL.revokeObjectURL(src);
-    clearResult();
+  const reset = () => {
+    generation.current++;
+    detectionRun.current++;
+    attempts.current.clear();
+    if (sourceRef.current) URL.revokeObjectURL(sourceRef.current);
+    sourceRef.current = null;
+    setSrc(null);
     setDetections([]);
     setDetectorState("idle");
-    setSrc(URL.createObjectURL(file));
+    changeThread(() => []);
+    setSelection(null);
+    setActiveEntry(null);
+    setHighlighted(null);
+    setQuestion("");
   };
-
+  const clearResult = () => {
+    setSelection(null);
+    setActiveEntry(null);
+    setHighlighted(null);
+  };
+  const pick = (file?: File | null) => {
+    if (!file?.type.startsWith("image/")) return;
+    reset();
+    const url = URL.createObjectURL(file);
+    sourceRef.current = url;
+    setSrc(url);
+  };
+  useEffect(
+    () => () => {
+      generation.current++;
+      detectionRun.current++;
+      if (sourceRef.current) URL.revokeObjectURL(sourceRef.current);
+    },
+    [],
+  );
   useEffect(() => {
-    const updateFrame = () => {
-      const image = imageRef.current;
-      if (image) setFrame(getImageFrame(image));
+    const viewport = window.visualViewport;
+    const update = () =>
+      document.documentElement.style.setProperty(
+        "--workspace-height",
+        `${viewport?.height ?? window.innerHeight}px`,
+      );
+    update();
+    viewport?.addEventListener("resize", update);
+    return () => {
+      viewport?.removeEventListener("resize", update);
+      document.documentElement.style.removeProperty("--workspace-height");
     };
-    window.addEventListener("resize", updateFrame);
-    return () => window.removeEventListener("resize", updateFrame);
   }, []);
-
   const onLoad = async () => {
     const image = imageRef.current;
     if (!image) return;
-    setFrame(getImageFrame(image));
+    const epoch = generation.current,
+      runId = ++detectionRun.current;
+    changeThread((items) =>
+      items.length ? items : [{ id: crypto.randomUUID(), sender: "assistant", welcome: true }],
+    );
     setDetectorState("loading");
     try {
-      setDetections(await detect(image));
+      const found = await detect(image);
+      if (epoch !== generation.current || runId !== detectionRun.current) return;
+      setDetections(found);
       setDetectorState("ready");
-    } catch (cause) {
-      console.error(cause);
-      setDetectorState("failed");
+    } catch {
+      if (epoch === generation.current && runId === detectionRun.current)
+        setDetectorState("failed");
     }
   };
-
-  const run = async (
-    mode: "selection" | "scene",
-    selected: Selection | null,
-    nextQuestion: string | null,
-    previous: string | null,
-  ) => {
+  const run = async (entry: ThreadEntry) => {
     const image = imageRef.current;
-    if (!image) return;
-    const id = ++requestId.current;
-    setLoading(true);
-    setError(null);
-    setMemoryState("none");
-    const result = await ask({
-      data: {
-        image: toDataUrl(image, null, 1280),
-        crop: toDataUrl(image, selected ? pad(selected.box, 0.15) : null, selected ? 512 : 1280),
-        mode,
-        detectorLabel: selected?.label ?? null,
-        detectorScore: selected?.score ?? null,
-        detectorCandidates: detections.map((item, index) => ({ id: index + 1, ...item })),
-        question: nextQuestion,
-        previous,
-        memories: loadMemories()
-          .map((memory) => memory.text)
-          .slice(0, 50),
-      },
-    }).catch(
-      () => ({ error: "Couldn't reach the assistant." }) as { error: string; answer?: undefined },
+    if (!image?.naturalWidth) return;
+    const epoch = generation.current,
+      attempt = (attempts.current.get(entry.id) ?? 0) + 1;
+    attempts.current.set(entry.id, attempt);
+    changeThread((items) =>
+      items.map((item) =>
+        item.id === entry.id ? { ...item, loading: true, error: undefined } : item,
+      ),
     );
-    if (id !== requestId.current) return;
-    setLoading(false);
-    if (result.error || !result.answer) {
-      setError(result.error ?? "Something went wrong.");
-      return;
+    try {
+      const selected = entry.selection ?? null;
+      const result = await ask({
+        data: {
+          image: toDataUrl(image, null, 1280),
+          crop: toDataUrl(image, selected?.box ?? null, selected ? 512 : 1280),
+          mode: selected ? "selection" : "scene",
+          detectorLabel: selected?.label ?? null,
+          detectorScore: selected?.score ?? null,
+          detectorCandidates: detections
+            .slice(0, 40)
+            .map((item, index) => ({ id: index + 1, ...item })),
+          question: entry.question ?? null,
+          previous: entry.previous ?? null,
+          memories: loadMemories()
+            .map((memory) => memory.text)
+            .slice(0, 50),
+        },
+      });
+      if (epoch !== generation.current || attempts.current.get(entry.id) !== attempt) return;
+      const answer = result.answer;
+      changeThread((items) =>
+        items.map((item) =>
+          item.id !== entry.id
+            ? item
+            : {
+                ...item,
+                loading: false,
+                answer,
+                error: result.error ?? (!answer ? "No answer received. Please retry." : undefined),
+                memoryState:
+                  answer?.suggestedMemory &&
+                  !loadMemories().some(
+                    (memory) => memory.text.toLowerCase() === answer.suggestedMemory?.toLowerCase(),
+                  )
+                    ? "offered"
+                    : undefined,
+              },
+        ),
+      );
+    } catch {
+      if (epoch === generation.current && attempts.current.get(entry.id) === attempt)
+        changeThread((items) =>
+          items.map((item) =>
+            item.id === entry.id
+              ? { ...item, loading: false, error: "Couldn't reach the assistant. Please retry." }
+              : item,
+          ),
+        );
     }
-    setAnswer(result.answer);
-    const existing = loadMemories().map((memory) => memory.text.toLowerCase());
-    setMemoryState(
-      result.answer.suggestedMemory &&
-        !existing.includes(result.answer.suggestedMemory.toLowerCase())
-        ? "offered"
-        : "none",
-    );
   };
-
-  const onPhotoTap = (event: React.MouseEvent) => {
-    if (sceneMode && (answer || loading || error)) return;
-    const image = imageRef.current;
-    if (!image) return;
-    const imageFrame = getImageFrame(image);
-    const x = (event.clientX - imageFrame.left) / imageFrame.width;
-    const y = (event.clientY - imageFrame.top) / imageFrame.height;
-    if (x < 0 || y < 0 || x > 1 || y > 1) return;
-    const hit = detections
-      .filter((item) => x >= item.x && x <= item.x + item.w && y >= item.y && y <= item.y + item.h)
-      .sort((a, b) => a.w * a.h - b.w * b.h)[0];
-    const selected: Selection = hit
-      ? { box: hit, label: hit.label, score: hit.score }
-      : { box: clampBox({ x: x - 0.08, y: y - 0.08, w: 0.16, h: 0.16 }), label: null, score: null };
-    clearResult();
-    setSelection(selected);
-    void run("selection", selected, null, null);
-  };
-
-  const onAsk = (event: React.FormEvent) => {
-    event.preventDefault();
-    const nextQuestion = question.trim();
-    if (!nextQuestion || loading) return;
-    const previous = answer ? `${answer.headline} ${answer.explanation}` : null;
+  const submit = () => {
+    const text = question.trim();
+    if (!text || !imageRef.current?.naturalWidth) return;
+    const entry: ThreadEntry = {
+      id: crypto.randomUUID(),
+      sender: "assistant",
+      question: text,
+      selection,
+      previous: relevantPrevious(threadRef.current, selection),
+      loading: true,
+    };
+    changeThread((items) => [
+      ...items,
+      { id: crypto.randomUUID(), sender: "user", question: text, selection },
+      entry,
+    ]);
     setQuestion("");
-    if (selection) {
-      void run("selection", selection, nextQuestion, previous);
+    setActiveEntry(entry.id);
+    void run(entry);
+  };
+  const activate = (entry: ThreadEntry) => {
+    if (entry.sender !== "assistant" || entry.welcome) return;
+    setActiveEntry(entry.id);
+    setSelection(entry.selection ?? null);
+  };
+  const selectMarker = (marker: Marker) => {
+    const selected: Selection = {
+      key: marker.key,
+      number: marker.number,
+      box: marker.box,
+      label: marker.label,
+      score: marker.score,
+    };
+    setSelection(selected);
+    setHighlighted(marker.key);
+    if (marker.entryId) {
+      setActiveEntry(marker.entryId);
       return;
     }
-    setSceneMode(true);
-    void run("scene", null, nextQuestion, previous);
+    const existing = [...threadRef.current]
+      .reverse()
+      .find((item) => item.sender === "assistant" && item.selection?.key === marker.key);
+    if (existing) {
+      setActiveEntry(existing.id);
+      return;
+    }
+    const entry: ThreadEntry = {
+      id: crypto.randomUUID(),
+      sender: "assistant",
+      selection: selected,
+      loading: true,
+    };
+    changeThread((items) => [...items, entry]);
+    setActiveEntry(entry.id);
+    void run(entry);
   };
-
-  const annotations = answer?.annotations.length
-    ? answer.annotations.map((annotation) => ({ ...annotation, box: clampBox(annotation) }))
-    : selection
-      ? [
-          {
-            label: answer?.name ?? selection.label ?? "Looking",
-            confidence: selection.score ?? 0,
-            box: selection.box,
+  const onTap = (x: number, y: number) => {
+    const candidates = detections
+      .map((item, index) => ({ item, index }))
+      .filter(
+        ({ item }) => x >= item.x && x <= item.x + item.w && y >= item.y && y <= item.y + item.h,
+      )
+      .sort((a, b) => a.item.w * a.item.h - b.item.w * b.item.h);
+    const hit = candidates[0];
+    selectMarker(
+      hit
+        ? {
+            key: `candidate:${hit.index}`,
+            number: hit.index + 1,
+            box: hit.item,
+            label: hit.item.label,
+            score: hit.item.score,
+          }
+        : {
+            key: crypto.randomUUID(),
+            number: detections.length + 1,
+            box: clampBox({ x: x - 0.08, y: y - 0.08, w: 0.16, h: 0.16 }),
+            label: "Object",
+            score: 0,
           },
-        ]
-      : [];
-  const resultOnLeft = selection ? selection.box.x + selection.box.w / 2 > 0.5 : false;
-  const hasResult = loading || Boolean(answer) || Boolean(error);
-
+    );
+  };
+  const active = thread.find((entry) => entry.id === activeEntry);
+  const historical = active ? answerMarkers(active) : [];
+  const markers: Marker[] = historical.length
+    ? historical
+    : detections.map((item, index) => ({
+        key: `candidate:${index}`,
+        number: index + 1,
+        box: item,
+        label: item.label,
+        score: item.score,
+      }));
+  const hasResult = false;
+  const input = (
+    <input
+      ref={fileRef}
+      type="file"
+      accept="image/*"
+      className="hidden"
+      aria-label="Upload photo"
+      onChange={(event) => {
+        pick(event.target.files?.[0]);
+        event.target.value = "";
+      }}
+    />
+  );
+  if (src)
+    return (
+      <main
+        className="workspace"
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => {
+          event.preventDefault();
+          pick(event.dataTransfer.files?.[0]);
+        }}
+      >
+        {input}
+        <ThreadPanel
+          thread={thread}
+          selection={selection}
+          activeEntry={activeEntry}
+          highlighted={highlighted}
+          detectorState={detectorState}
+          count={detections.length}
+          question={question}
+          onQuestion={setQuestion}
+          onSubmit={submit}
+          onBack={reset}
+          onNew={() => fileRef.current?.click()}
+          onClear={clearResult}
+          onRetry={(entry) => void run(entry)}
+          onMemory={(id, save) => {
+            const entry = threadRef.current.find((item) => item.id === id);
+            if (!entry?.answer?.suggestedMemory || entry.memoryState !== "offered") return;
+            try {
+              if (
+                save &&
+                !loadMemories().some((memory) => memory.text === entry.answer?.suggestedMemory)
+              )
+                addMemory(entry.answer.suggestedMemory);
+              changeThread((items) =>
+                items.map((item) =>
+                  item.id === id ? { ...item, memoryState: save ? "saved" : "skipped" } : item,
+                ),
+              );
+            } catch {
+              changeThread((items) =>
+                items.map((item) =>
+                  item.id === id
+                    ? { ...item, error: "Couldn't save memory in this browser. Please try again." }
+                    : item,
+                ),
+              );
+            }
+          }}
+          onMarker={selectMarker}
+          onHighlight={setHighlighted}
+          onActivate={activate}
+        />
+        <CanvasPanel
+          key={src}
+          src={src}
+          imageRef={imageRef}
+          markers={markers}
+          highlighted={highlighted}
+          onHighlight={setHighlighted}
+          onMarker={selectMarker}
+          onTap={onTap}
+          onLoad={() => void onLoad()}
+          onNew={() => fileRef.current?.click()}
+          onRecenter={clearResult}
+        />
+      </main>
+    );
   return (
     <div
       className="relative h-dvh w-full overflow-hidden bg-background"
@@ -248,48 +389,7 @@ function Index() {
         pick(event.dataTransfer.files?.[0]);
       }}
     >
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(event) => pick(event.target.files?.[0])}
-      />
-
-      {src && (
-        <div className="absolute inset-0 overflow-hidden" onClick={onPhotoTap}>
-          <img
-            ref={imageRef}
-            src={src}
-            alt="Your photo"
-            onLoad={onLoad}
-            className={`h-full w-full object-cover transition-[filter] duration-500 ${hasResult ? "brightness-[0.72]" : ""}`}
-          />
-          {hasResult && <div className="pointer-events-none absolute inset-0 bg-scrim-soft" />}
-        </div>
-      )}
-
-      {src &&
-        frame &&
-        annotations.map((annotation, index) => (
-          <div
-            key={`${annotation.label}-${index}`}
-            className="pointer-events-none absolute z-10 animate-in fade-in duration-300"
-            style={{
-              left: frame.left + annotation.box.x * frame.width,
-              top: frame.top + annotation.box.y * frame.height,
-              width: annotation.box.w * frame.width,
-              height: annotation.box.h * frame.height,
-            }}
-          >
-            <div className="absolute inset-0 border border-primary/90" />
-            <span className="absolute -top-5 left-0 flex h-5 items-center gap-1 bg-primary px-1.5 text-[9px] font-medium uppercase text-primary-foreground">
-              {annotations.length > 1 && <span>{String(index + 1).padStart(2, "0")}</span>}
-              <span className="max-w-28 truncate">{annotation.label}</span>
-            </span>
-          </div>
-        ))}
-
+      {input}
       <header className="pointer-events-none absolute inset-x-0 top-0 z-20 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center bg-gradient-to-b from-scrim-strong to-transparent px-4 pb-12 pt-4 text-[10px] uppercase md:px-8 md:pt-5">
         <nav className="pointer-events-auto flex min-w-0 items-center gap-1">
           <Button
@@ -352,134 +452,6 @@ function Index() {
           </Button>
           <p className="mt-4 text-[11px] text-muted-foreground/70">or drop one anywhere</p>
         </main>
-      )}
-
-      {src && hasResult && (
-        <section
-          className={`absolute inset-x-0 bottom-20 z-20 max-h-[44dvh] overflow-y-auto bg-gradient-to-t from-scrim-strong via-scrim to-transparent px-5 pb-6 pt-16 text-soft-shadow md:inset-x-auto md:bottom-20 md:top-20 md:max-h-none md:w-[min(23rem,32vw)] md:bg-gradient-to-r md:px-8 md:pb-8 md:pt-16 ${resultOnLeft ? "md:left-0" : "md:right-0 md:bg-gradient-to-l"}`}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {loading && (
-            <div className="flex items-center gap-3 text-xs uppercase text-foreground/75">
-              <span className="size-1.5 animate-pulse bg-primary" /> Looking across the photo
-            </div>
-          )}
-          {!loading && error && <p className="text-sm leading-relaxed text-foreground">{error}</p>}
-          {!loading && answer && (
-            <div className="animate-in fade-in slide-in-from-bottom-1 duration-500">
-              <p className="mb-3 text-[9px] uppercase text-foreground/55">
-                {sceneMode ? `${annotations.length} marked` : answer.name}
-              </p>
-              <h2 className="text-xl font-medium leading-snug md:text-2xl">{answer.headline}</h2>
-              <p className="mt-3 text-[13px] leading-relaxed text-foreground/85">
-                {answer.explanation}
-              </p>
-              {annotations.length > 1 && (
-                <ol className="mt-5 space-y-2 border-t border-foreground/15 pt-4">
-                  {annotations.map((annotation, index) => (
-                    <li
-                      key={`${annotation.label}-summary-${index}`}
-                      className="grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-baseline gap-2 text-xs"
-                    >
-                      <span className="text-primary">{String(index + 1).padStart(2, "0")}</span>
-                      <span className="truncate">{annotation.label}</span>
-                      {annotation.confidence < 0.7 && (
-                        <span className="text-[9px] uppercase text-foreground/45">likely</span>
-                      )}
-                    </li>
-                  ))}
-                </ol>
-              )}
-              {answer.confidence < 0.7 && (
-                <div className="mt-4 flex items-center gap-3 text-[11px] text-foreground/65">
-                  <span>{Math.round(answer.confidence * 100)}% sure</span>
-                  <Button
-                    variant="link"
-                    size="sm"
-                    className="h-auto p-0 text-[11px] text-foreground underline"
-                    onClick={() => setQuestion("Actually, this is ")}
-                  >
-                    Correct it
-                  </Button>
-                </div>
-              )}
-              {answer.nextSteps.length > 0 && (
-                <ul className="mt-5 space-y-2.5">
-                  {answer.nextSteps.slice(0, 3).map((step, index) => (
-                    <li
-                      key={index}
-                      className="grid grid-cols-[0.4rem_minmax(0,1fr)] gap-3 text-xs leading-relaxed"
-                    >
-                      <span className="mt-1.5 size-1 bg-primary" /> <span>{step}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {memoryState === "offered" && answer.suggestedMemory && (
-                <div className="mt-5 border-t border-foreground/15 pt-4 text-[11px] text-foreground/75">
-                  <p>Remember “{answer.suggestedMemory}”?</p>
-                  <div className="mt-2 flex gap-3">
-                    <Button
-                      variant="link"
-                      size="sm"
-                      className="h-auto p-0 text-[10px] uppercase text-foreground"
-                      onClick={() => {
-                        addMemory(answer.suggestedMemory ?? "");
-                        setMemoryState("saved");
-                      }}
-                    >
-                      Save
-                    </Button>
-                    <Button
-                      variant="link"
-                      size="sm"
-                      className="h-auto p-0 text-[10px] uppercase text-foreground/55"
-                      onClick={() => setMemoryState("none")}
-                    >
-                      Skip
-                    </Button>
-                  </div>
-                </div>
-              )}
-              {memoryState === "saved" && (
-                <p className="mt-5 text-[10px] uppercase text-foreground/55">Saved to memory</p>
-              )}
-            </div>
-          )}
-        </section>
-      )}
-
-      {src && (
-        <form
-          onSubmit={onAsk}
-          className="absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-scrim-strong to-transparent px-4 pb-4 pt-10 md:px-8 md:pb-6"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <div className="mx-auto grid max-w-2xl grid-cols-[minmax(0,1fr)_2.25rem] items-center border-b border-foreground/45 focus-within:border-foreground">
-            <input
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              placeholder={
-                selection
-                  ? `Ask about this ${answer?.name ?? "object"}…`
-                  : "Ask about the whole photo…"
-              }
-              className="min-w-0 bg-transparent py-3 text-sm text-foreground outline-none placeholder:text-foreground/55"
-              aria-label="Ask about the photo"
-            />
-            <Button
-              type="submit"
-              variant="ghost"
-              size="icon"
-              disabled={!question.trim() || loading}
-              className="size-9 text-foreground"
-              aria-label="Ask"
-              title="Ask"
-            >
-              <ArrowUp />
-            </Button>
-          </div>
-        </form>
       )}
     </div>
   );
