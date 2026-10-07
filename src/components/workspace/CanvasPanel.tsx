@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { Crosshair, ImagePlus, ScanLine } from "lucide-react";
+import { Crosshair, ImagePlus, ScanLine, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { fitFrame, type Marker } from "@/lib/workspace";
+import { fitFrame, markerColor, type Marker } from "@/lib/workspace";
 
 type Props = {
   src: string;
@@ -14,6 +14,8 @@ type Props = {
   onLoad: () => void;
   onNew: () => void;
   onRecenter: () => void;
+  fullView: boolean;
+  onFullView: () => void;
 };
 export function CanvasPanel({
   src,
@@ -26,6 +28,8 @@ export function CanvasPanel({
   onLoad,
   onNew,
   onRecenter,
+  fullView,
+  onFullView,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const [frame, setFrame] = useState<ReturnType<typeof fitFrame> | null>(null);
@@ -52,13 +56,22 @@ export function CanvasPanel({
   }, [src, update]);
   return (
     <section aria-label="Photo canvas" className="canvas-panel relative min-h-0 min-w-0 bg-canvas">
-      <div className="absolute inset-x-0 top-0 z-20 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-4 py-2 bg-canvas">
-        <span className="truncate text-xs text-muted-foreground">Photo workspace</span>
+      <div className="absolute right-3 top-3 z-20 flex items-center gap-1 rounded-lg bg-canvas/90">
         <div className="flex shrink-0 gap-1">
           <Button
             variant="ghost"
             size="icon"
-            className="min-h-11 min-w-11"
+            className="size-8"
+            aria-label={fullView ? "Exit full view" : "Full view"}
+            title={fullView ? "Exit full view" : "Full view"}
+            onClick={onFullView}
+          >
+            {fullView ? <Minimize2 /> : <Maximize2 />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
             aria-label="Toggle boxes"
             aria-pressed={boxes}
             title="Toggle boxes"
@@ -69,7 +82,7 @@ export function CanvasPanel({
           <Button
             variant="ghost"
             size="icon"
-            className="min-h-11 min-w-11"
+            className="size-8"
             aria-label="Recenter photo"
             title="Recenter photo"
             onClick={() => {
@@ -82,7 +95,7 @@ export function CanvasPanel({
           <Button
             variant="ghost"
             size="icon"
-            className="min-h-11 min-w-11"
+            className="size-8"
             aria-label="Change photo"
             title="Change photo"
             onClick={onNew}
@@ -94,7 +107,7 @@ export function CanvasPanel({
       <div
         ref={host}
         data-testid="image-stage"
-        className="absolute inset-x-3 bottom-3 top-16 overflow-hidden"
+        className="absolute inset-x-3 bottom-3 top-14 overflow-hidden"
         onClick={(event) => {
           if (!frame || !host.current) return;
           const rect = host.current.getBoundingClientRect();
@@ -119,6 +132,7 @@ export function CanvasPanel({
               key={marker.key}
               className="pointer-events-none absolute"
               style={{
+                color: markerColor(marker.label),
                 left: frame.left + marker.box.x * frame.width,
                 top: frame.top + marker.box.y * frame.height,
                 width: marker.box.w * frame.width,
@@ -127,14 +141,15 @@ export function CanvasPanel({
             >
               {boxes && (
                 <div
-                  className={`absolute inset-0 border ${highlighted === marker.key ? "border-primary border-2 bg-primary/10" : "border-primary/50"}`}
+                  className={`object-box absolute inset-0 ${highlighted === marker.key ? "is-highlighted" : ""}`}
                 />
               )}
               <Button
-                variant="default"
+                variant="ghost"
                 size="icon"
                 data-marker={marker.key}
-                className={`pointer-events-auto absolute left-0 top-0 min-h-11 min-w-11 rounded-full ${highlighted === marker.key ? "ring-2 ring-ring ring-offset-2 ring-offset-canvas" : ""}`}
+                className="object-pin pointer-events-auto absolute left-0 top-0 size-6 rounded-md text-[10px]"
+                style={{ color: "var(--canvas)", backgroundColor: markerColor(marker.label) }}
                 aria-label={`Target ${marker.number}: ${marker.label}`}
                 title={marker.label}
                 onClick={(event) => {

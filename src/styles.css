@@ -171,7 +171,16 @@
 }
 
 :root {
-  --canvas: oklch(0.105 0.004 260);
+  --canvas: oklch(0.245 0 0);
+  --workspace-surface: oklch(0.225 0 0);
+  --object-color-0: oklch(0.78 0.15 155);
+  --object-color-1: oklch(0.8 0.13 230);
+  --object-color-2: oklch(0.8 0.14 75);
+  --object-color-3: oklch(0.78 0.16 310);
+  --object-color-4: oklch(0.77 0.16 25);
+  --object-color-5: oklch(0.8 0.13 190);
+  --object-color-6: oklch(0.84 0.15 105);
+  --object-color-7: oklch(0.76 0.14 270);
   --card: oklch(0.18 0.005 260);
   --card-foreground: var(--foreground);
   --popover: var(--card);
@@ -189,28 +198,113 @@
 }
 .workspace {
   display: grid;
-  grid-template-columns: clamp(360px, 38%, 500px) minmax(0, 1fr);
+  grid-template-columns: clamp(240px, var(--thread-width, 24%), calc(100% - 188px)) 8px minmax(
+      0,
+      1fr
+    );
   height: var(--workspace-height, 100dvh);
+  padding: 8px;
   overflow: hidden;
+  background: var(--workspace-surface);
 }
 .thread-panel {
-  border-right: 1px solid var(--border);
+  min-width: 0;
 }
 .composer {
-  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  margin: 0 0 max(0px, env(safe-area-inset-bottom));
+  border-radius: 26px;
+  padding-bottom: 10px;
+  background: var(--canvas);
+}
+.artifact-container {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: var(--artifact-height, 100%);
+}
+.canvas-panel {
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+}
+.workspace-divider {
+  cursor: col-resize;
+  touch-action: none;
+  position: relative;
+}
+.workspace-divider::after {
+  content: "";
+  position: absolute;
+  inset: 20% 3px;
+  border-radius: 4px;
+  background: transparent;
+}
+.workspace-divider:hover::after,
+.workspace-divider:focus-visible::after {
+  background: var(--border);
+}
+.artifact-resize-corner {
+  position: absolute;
+  left: -4px;
+  bottom: -4px;
+  width: 18px;
+  height: 18px;
+  cursor: nesw-resize;
+  touch-action: none;
+  z-index: 30;
+}
+.artifact-resize-corner:hover,
+.artifact-resize-corner:focus-visible {
+  border-left: 2px solid var(--primary);
+  border-bottom: 2px solid var(--primary);
+  border-radius: 0 0 0 8px;
+}
+.is-resizing {
+  user-select: none;
+}
+.workspace.is-full-view {
+  grid-template-columns: minmax(0, 1fr);
+}
+.is-full-view .thread-panel,
+.is-full-view .workspace-divider,
+.is-full-view .artifact-resize-corner {
+  display: none;
+}
+.is-full-view .artifact-container {
+  height: 100%;
+}
+.object-box {
+  border: 2px solid currentColor;
+  border-radius: 3px;
+}
+.object-box.is-highlighted {
+  border-width: 3px;
+  box-shadow: 0 0 0 1px var(--canvas);
+}
+.object-pin:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
 }
 @media (max-width: 767px) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(140px, 45%) minmax(0, 1fr);
+    gap: 8px;
   }
-  .canvas-panel {
+  .artifact-container {
     grid-row: 1;
+    height: 100%;
   }
   .thread-panel {
     grid-row: 2;
-    border-right: none;
-    border-top: 1px solid var(--border);
+  }
+  .workspace-divider,
+  .artifact-resize-corner {
+    display: none;
+  }
+  .workspace.is-full-view {
+    grid-template-rows: minmax(0, 1fr);
   }
 }
 @media (prefers-reduced-motion: reduce) {
