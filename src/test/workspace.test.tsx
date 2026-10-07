@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Index } from "@/routes/index";
-import { fitFrame, padBox, relevantPrevious, type ThreadEntry } from "@/lib/workspace";
+import { fitFrame, markerColor, padBox, relevantPrevious, type ThreadEntry } from "@/lib/workspace";
 import type { VisionAnswer } from "@/lib/vision.functions";
 
 const mocks = vi.hoisted(() => ({ detect: vi.fn(), ask: vi.fn() }));
@@ -39,7 +39,7 @@ async function upload() {
     target: { files: [new File(["image"], "photo.png", { type: "image/png" })] },
   });
   fireEvent.load(screen.getByAltText("Your photo"));
-  await waitFor(() => expect(screen.getByText(/objects found/)).toBeInTheDocument());
+  expect(screen.getByLabelText("Conversation")).toBeInTheDocument();
 }
 function ask(question: string) {
   fireEvent.change(screen.getByLabelText("Ask about this object or the whole photo"), {
@@ -117,8 +117,14 @@ describe("split workspace interactions", () => {
     expect(screen.queryByLabelText("Conversation")).not.toBeInTheDocument();
     await upload();
     expect(screen.getByLabelText("Conversation")).toBeInTheDocument();
+    expect(mocks.detect).not.toHaveBeenCalled();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(screen.queryByText("What would you like to explore?")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Target \d/ })).not.toBeInTheDocument();
     ask("Find objects");
     await screen.findByText("Two useful objects");
+    expect(mocks.detect).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Target 2: Cup" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show target 2: Cup" }));
     expect(screen.getByText("Target #2 · Cup")).toBeInTheDocument();
     ask("How do I clean it?");
@@ -129,6 +135,7 @@ describe("split workspace interactions", () => {
       question: "How do I clean it?",
     });
     expect(mocks.ask.mock.calls[1]![0].data.previous).toContain("Previous scene answer");
+    expect(mocks.detect).toHaveBeenCalledTimes(1);
   });
   it("saves only with opt-in and allows skipping", async () => {
     render(<Index />);
@@ -149,9 +156,46 @@ describe("split workspace interactions", () => {
     render(<Index />);
     await upload();
     ask("Describe this");
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: "Back to start" }));
     await act(async () => pending.resolve({ answer }));
     expect(screen.getByText("See more in every image.")).toBeInTheDocument();
     expect(screen.queryByText("Two useful objects")).not.toBeInTheDocument();
+  });
+  it("ignores detection that finishes after changing photo", async () => {
+    const pending = deferred<[]>();
+    mocks.detect.mockReturnValue(pending.promise);
+    render(<Index />);
+    await upload();
+    ask("Find objects");
+    fireEvent.click(screen.getByRole("button", { name: "Back to start" }));
+    await act(async () => pending.resolve([]));
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(screen.getByText("See more in every image.")).toBeInTheDocument();
+  });
+  it("resizes width and height, then restores the same photo from full view", async () => {
+    render(<Index />);
+    await upload();
+    const image = screen.getByAltText("Your photo");
+    const root = image.closest("main")!;
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize conversation and canvas" }), {
+      key: "ArrowRight",
+    });
+    expect(root.style.getPropertyValue("--thread-width")).toBe("26%");
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize artifact width and height" }), {
+      key: "ArrowUp",
+    });
+    expect(root.style.getPropertyValue("--artifact-height")).toBe("97%");
+    fireEvent.click(screen.getByRole("button", { name: "Full view" }));
+    expect(root).toHaveClass("is-full-view");
+    fireEvent.click(screen.getByRole("button", { name: "Exit full view" }));
+    expect(root).not.toHaveClass("is-full-view");
+    expect(screen.getByAltText("Your photo")).toBe(image);
+    expect(mocks.detect).not.toHaveBeenCalled();
+  });
+  it("keeps the same object type color and separates different types", () => {
+    expect(markerColor("Person")).toBe(markerColor("person"));
+    expect(markerColor("cup 2")).toBe(markerColor("cup"));
+    expect(markerColor("Person")).not.toBe(markerColor("cup"));
   });
 });

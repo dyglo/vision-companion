@@ -2,7 +2,13 @@ import { ArrowLeft, ArrowUp, ImagePlus, LoaderCircle, Target, X } from "lucide-r
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { answerMarkers, type Marker, type Selection, type ThreadEntry } from "@/lib/workspace";
+import {
+  answerMarkers,
+  markerColor,
+  type Marker,
+  type Selection,
+  type ThreadEntry,
+} from "@/lib/workspace";
 
 type Props = {
   thread: ThreadEntry[];
@@ -10,7 +16,6 @@ type Props = {
   activeEntry: string | null;
   highlighted: string | null;
   detectorState: string;
-  count: number;
   question: string;
   onQuestion: (v: string) => void;
   onSubmit: () => void;
@@ -38,11 +43,8 @@ export function ThreadPanel(props: Props) {
   }, [activeEntry]);
   const pending = thread.some((entry) => entry.loading);
   return (
-    <section
-      aria-label="Conversation"
-      className="thread-panel flex min-h-0 min-w-0 flex-col bg-background"
-    >
-      <header className="shrink-0 border-b border-border px-4 py-2">
+    <section aria-label="Conversation" className="thread-panel flex min-h-0 min-w-0 flex-col">
+      <header className="shrink-0 px-3 py-2">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center">
           <div className="flex min-w-0 items-center gap-1">
             <Button
@@ -78,9 +80,7 @@ export function ThreadPanel(props: Props) {
             ? "Scanning photo…"
             : props.detectorState === "failed"
               ? "Detection unavailable · AI can still help"
-              : props.detectorState === "ready"
-                ? `${props.count} objects found`
-                : "Opening photo…"}
+              : ""}
           {pending ? " · Lumen is thinking…" : ""}
         </p>
       </header>
@@ -99,15 +99,6 @@ export function ThreadPanel(props: Props) {
             <p className="mb-2 text-[10px] uppercase text-muted-foreground">
               {entry.sender === "user" ? "You" : "Lumen"}
             </p>
-            {entry.welcome && (
-              <>
-                <h1 className="text-xl font-medium">What would you like to explore?</h1>
-                <p className="mt-2 text-sm text-muted-foreground">Your photo is ready.</p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Tap an object or ask about the whole photo.
-                </p>
-              </>
-            )}
             {entry.sender === "user" && (
               <p className="break-words text-sm leading-relaxed">{entry.question}</p>
             )}
@@ -163,7 +154,7 @@ export function ThreadPanel(props: Props) {
                           onBlur={() => props.onHighlight(null)}
                           aria-label={`Show target ${marker.number}: ${marker.label}`}
                         >
-                          <span className="shrink-0 text-primary">
+                          <span className="shrink-0" style={{ color: markerColor(marker.label) }}>
                             {marker.number.toString().padStart(2, "0")}
                           </span>
                           <span className="min-w-0 break-words">
@@ -231,7 +222,7 @@ export function ThreadPanel(props: Props) {
         ))}
       </div>
       <form
-        className="composer shrink-0 border-t border-border bg-background px-4 pt-3"
+        className="composer shrink-0 border border-border bg-muted/30 px-4 pt-3"
         onSubmit={(event) => {
           event.preventDefault();
           props.onSubmit();

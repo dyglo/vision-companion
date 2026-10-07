@@ -16,7 +16,6 @@ export type ThreadEntry = {
   loading?: boolean;
   error?: string | undefined;
   memoryError?: string | undefined;
-  welcome?: boolean;
   previous?: string | null;
   memoryState?: "offered" | "saved" | "skipped" | undefined;
 };
@@ -97,4 +96,15 @@ export function answerMarkers(entry: ThreadEntry): Marker[] {
         },
       ]
     : [];
+}
+
+export function markerColor(label: string) {
+  const type = label
+    .trim()
+    .toLowerCase()
+    .replace(/\s*(?:#\s*)?\d+\s*$/, "")
+    .trim();
+  let hash = 0;
+  for (const char of type) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return `var(--object-color-${hash % 8})`;
 }

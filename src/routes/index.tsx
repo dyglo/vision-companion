@@ -7,6 +7,7 @@ import { detect, type Detection } from "@/lib/detector";
 import { askVision } from "@/lib/vision.functions";
 import { addMemory, loadMemories } from "@/lib/memory";
 import { ThreadPanel } from "@/components/workspace/ThreadPanel";
+import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
 import { CanvasPanel } from "@/components/workspace/CanvasPanel";
 import {
   answerMarkers,
@@ -69,7 +70,7 @@ export function Index() {
   const imageRef = useRef<HTMLImageElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const generation = useRef(0);
-  const detectionRun = useRef(0);
+  const detectionCache = useRef<Promise<Detection[]> | null>(null);
   const sourceRef = useRef<string | null>(null);
   const attempts = useRef(new Map<string, number>());
   const ask = useServerFn(askVision);
@@ -79,7 +80,7 @@ export function Index() {
   };
   const reset = () => {
     generation.current++;
-    detectionRun.current++;
+    detectionCache.current = null;
     attempts.current.clear();
     if (sourceRef.current) URL.revokeObjectURL(sourceRef.current);
     sourceRef.current = null;
@@ -109,7 +110,6 @@ export function Index() {
   useEffect(
     () => () => {
       generation.current++;
-      detectionRun.current++;
       if (sourceRef.current) URL.revokeObjectURL(sourceRef.current);
     },
     [],
@@ -130,24 +130,26 @@ export function Index() {
       document.documentElement.style.removeProperty("--workspace-height");
     };
   }, []);
-  const onLoad = async () => {
+  const ensureDetections = () => {
+    if (detectionCache.current) return detectionCache.current;
     const image = imageRef.current;
-    if (!image) return;
-    const epoch = generation.current,
-      runId = ++detectionRun.current;
-    changeThread((items) =>
-      items.length ? items : [{ id: crypto.randomUUID(), sender: "assistant", welcome: true }],
-    );
+    if (!image) return Promise.resolve([] as Detection[]);
+    const epoch = generation.current;
     setDetectorState("loading");
-    try {
-      const found = await detect(image);
-      if (epoch !== generation.current || runId !== detectionRun.current) return;
-      setDetections(found);
-      setDetectorState("ready");
-    } catch {
-      if (epoch === generation.current && runId === detectionRun.current)
-        setDetectorState("failed");
-    }
+    const pending = detect(image)
+      .then((found) => {
+        if (epoch === generation.current) {
+          setDetections(found);
+          setDetectorState("ready");
+        }
+        return found;
+      })
+      .catch(() => {
+        if (epoch === generation.current) setDetectorState("failed");
+        return [] as Detection[];
+      });
+    detectionCache.current = pending;
+    return pending;
   };
   const run = async (entry: ThreadEntry) => {
     const image = imageRef.current;
@@ -161,7 +163,27 @@ export function Index() {
       ),
     );
     try {
-      const selected = entry.selection ?? null;
+      const candidates = await ensureDetections();
+      if (epoch !== generation.current || attempts.current.get(entry.id) !== attempt) return;
+      let selected = entry.selection ?? null;
+      if (selected && !selected.label) {
+        const cx = selected.box.x + selected.box.w / 2,
+          cy = selected.box.y + selected.box.h / 2;
+        const hit = candidates
+          .filter(
+            (item) =>
+              cx >= item.x && cx <= item.x + item.w && cy >= item.y && cy <= item.y + item.h,
+          )
+          .sort((a, b) => a.w * a.h - b.w * b.h)[0];
+        if (hit) {
+          selected = { ...selected, box: clampBox(hit), label: hit.label, score: hit.score };
+          const target = selected;
+          changeThread((items) =>
+            items.map((item) => (item.id === entry.id ? { ...item, selection: target } : item)),
+          );
+          setSelection((current) => (current?.key === target.key ? target : current));
+        }
+      }
       const result = await ask({
         data: {
           image: toDataUrl(image, null, 1280),
@@ -169,7 +191,7 @@ export function Index() {
           mode: selected ? "selection" : "scene",
           detectorLabel: selected?.label ?? null,
           detectorScore: selected?.score ?? null,
-          detectorCandidates: detections
+          detectorCandidates: candidates
             .slice(0, 40)
             .map((item, index) => ({ id: index + 1, ...item })),
           question: entry.question ?? null,
@@ -232,7 +254,7 @@ export function Index() {
     void run(entry);
   };
   const activate = (entry: ThreadEntry) => {
-    if (entry.sender !== "assistant" || entry.welcome) return;
+    if (entry.sender !== "assistant") return;
     setActiveEntry(entry.id);
     setSelection(entry.selection ?? null);
     setPreviewEntry(null);
@@ -242,7 +264,7 @@ export function Index() {
       key: marker.key,
       number: marker.number,
       box: marker.box,
-      label: marker.label,
+      label: marker.label || null,
       score: marker.score,
     };
     setSelection(selected);
@@ -303,22 +325,13 @@ export function Index() {
             key: crypto.randomUUID(),
             number: detections.length + 1,
             box: clampBox({ x: x - 0.08, y: y - 0.08, w: 0.16, h: 0.16 }),
-            label: "Object",
+            label: "",
             score: 0,
           },
     );
   };
   const active = thread.find((entry) => entry.id === (previewEntry ?? activeEntry));
-  const historical = active ? answerMarkers(active) : [];
-  const markers: Marker[] = historical.length
-    ? historical
-    : detections.map((item, index) => ({
-        key: `candidate:${index}`,
-        number: index + 1,
-        box: item,
-        label: item.label,
-        score: item.score,
-      }));
+  const markers: Marker[] = active?.answer ? answerMarkers(active) : [];
   const highlightMarker = (key: string | null) => {
     setHighlighted(key);
     const owner = key
@@ -342,79 +355,78 @@ export function Index() {
   );
   if (src)
     return (
-      <main
-        className="workspace"
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => {
-          event.preventDefault();
-          pick(event.dataTransfer.files?.[0]);
-        }}
-      >
-        {input}
-        <ThreadPanel
-          thread={thread}
-          selection={selection}
-          activeEntry={activeEntry}
-          highlighted={highlighted}
-          detectorState={detectorState}
-          count={detections.length}
-          question={question}
-          onQuestion={setQuestion}
-          onSubmit={submit}
-          onBack={reset}
-          onNew={() => fileRef.current?.click()}
-          onClear={clearResult}
-          onRetry={(entry) => void run(entry)}
-          onMemory={(id, save) => {
-            const entry = threadRef.current.find((item) => item.id === id);
-            if (!entry?.answer?.suggestedMemory || entry.memoryState !== "offered") return;
-            try {
-              if (
-                save &&
-                !loadMemories().some(
-                  (memory) =>
-                    memory.text.toLowerCase() === entry.answer?.suggestedMemory?.toLowerCase(),
+      <WorkspaceLayout
+        input={input}
+        onDrop={pick}
+        thread={
+          <ThreadPanel
+            thread={thread}
+            selection={selection}
+            activeEntry={activeEntry}
+            highlighted={highlighted}
+            detectorState={detectorState}
+            question={question}
+            onQuestion={setQuestion}
+            onSubmit={submit}
+            onBack={reset}
+            onNew={() => fileRef.current?.click()}
+            onClear={clearResult}
+            onRetry={(entry) => void run(entry)}
+            onMemory={(id, save) => {
+              const entry = threadRef.current.find((item) => item.id === id);
+              if (!entry?.answer?.suggestedMemory || entry.memoryState !== "offered") return;
+              try {
+                if (
+                  save &&
+                  !loadMemories().some(
+                    (memory) =>
+                      memory.text.toLowerCase() === entry.answer?.suggestedMemory?.toLowerCase(),
+                  )
                 )
-              )
-                addMemory(entry.answer.suggestedMemory);
-              changeThread((items) =>
-                items.map((item) =>
-                  item.id === id
-                    ? { ...item, memoryState: save ? "saved" : "skipped", memoryError: undefined }
-                    : item,
-                ),
-              );
-            } catch {
-              changeThread((items) =>
-                items.map((item) =>
-                  item.id === id
-                    ? {
-                        ...item,
-                        memoryError: "Couldn't save memory in this browser. Please try again.",
-                      }
-                    : item,
-                ),
-              );
-            }
-          }}
-          onMarker={selectMarker}
-          onHighlight={highlightMarker}
-          onActivate={activate}
-        />
-        <CanvasPanel
-          key={src}
-          src={src}
-          imageRef={imageRef}
-          markers={markers}
-          highlighted={highlighted}
-          onHighlight={setHighlighted}
-          onMarker={selectMarker}
-          onTap={onTap}
-          onLoad={() => void onLoad()}
-          onNew={() => fileRef.current?.click()}
-          onRecenter={clearResult}
-        />
-      </main>
+                  addMemory(entry.answer.suggestedMemory);
+                changeThread((items) =>
+                  items.map((item) =>
+                    item.id === id
+                      ? { ...item, memoryState: save ? "saved" : "skipped", memoryError: undefined }
+                      : item,
+                  ),
+                );
+              } catch {
+                changeThread((items) =>
+                  items.map((item) =>
+                    item.id === id
+                      ? {
+                          ...item,
+                          memoryError: "Couldn't save memory in this browser. Please try again.",
+                        }
+                      : item,
+                  ),
+                );
+              }
+            }}
+            onMarker={selectMarker}
+            onHighlight={highlightMarker}
+            onActivate={activate}
+          />
+        }
+        canvas={(fullView, toggleFullView) => (
+          <CanvasPanel
+            key={src}
+            src={src}
+            imageRef={imageRef}
+            markers={markers}
+            highlighted={highlighted}
+            onHighlight={setHighlighted}
+            onMarker={selectMarker}
+            onTap={onTap}
+            onLoad={() => {}}
+            fullView={fullView}
+            onFullView={toggleFullView}
+            onNew={() => fileRef.current?.click()}
+            onRecenter={clearResult}
+          />
+        )}
+      />
     );
   return (
     <div
