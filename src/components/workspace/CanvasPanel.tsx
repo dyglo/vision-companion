@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Crosshair, ImagePlus, ScanLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { fitFrame, type Marker } from "@/lib/workspace";
@@ -30,7 +30,7 @@ export function CanvasPanel({
   const host = useRef<HTMLDivElement>(null);
   const [frame, setFrame] = useState<ReturnType<typeof fitFrame> | null>(null);
   const [boxes, setBoxes] = useState(true);
-  const update = () => {
+  const update = useCallback(() => {
     const image = imageRef.current,
       container = host.current;
     if (image?.naturalWidth && container)
@@ -42,14 +42,14 @@ export function CanvasPanel({
           image.naturalHeight,
         ),
       );
-  };
+  }, [imageRef]);
   useEffect(() => {
     const container = host.current;
     if (!container) return;
     const observer = new ResizeObserver(update);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [src]);
+  }, [src, update]);
   return (
     <section aria-label="Photo canvas" className="canvas-panel relative min-h-0 min-w-0 bg-canvas">
       <div className="absolute inset-x-0 top-0 z-20 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-4 py-2 bg-canvas">

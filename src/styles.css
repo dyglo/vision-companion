@@ -172,6 +172,11 @@
 
 :root {
   --canvas: oklch(0.105 0.004 260);
+  --card: oklch(0.18 0.005 260);
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+  --muted: oklch(0.23 0.005 260);
   --secondary: oklch(0.23 0.005 260);
   --secondary-foreground: var(--foreground);
   --accent: oklch(0.25 0.005 260);
