@@ -12,7 +12,10 @@ export type Detection = {
 };
 
 type Ort = typeof import("onnxruntime-web");
-let sessionPromise: Promise<{ ort: Ort; session: import("onnxruntime-web").InferenceSession }> | null = null;
+let sessionPromise: Promise<{
+  ort: Ort;
+  session: import("onnxruntime-web").InferenceSession;
+}> | null = null;
 
 function load() {
   if (!sessionPromise) {
@@ -65,7 +68,10 @@ export async function detect(img: HTMLImageElement, minScore = 0.3): Promise<Det
     }
     const score = sigmoid(best);
     if (score < minScore) continue;
-    const cx = boxes[i * 4]!, cy = boxes[i * 4 + 1]!, w = boxes[i * 4 + 2]!, h = boxes[i * 4 + 3]!;
+    const cx = boxes[i * 4]!,
+      cy = boxes[i * 4 + 1]!,
+      w = boxes[i * 4 + 2]!,
+      h = boxes[i * 4 + 3]!;
     res.push({
       label: LABELS[bi] ?? "object",
       score,
