@@ -1,7 +1,15 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Index } from "@/routes/index";
-import { fitFrame, markerColor, padBox, relevantPrevious, type ThreadEntry } from "@/lib/workspace";
+import { ThinkingStatus } from "@/components/workspace/ThreadPanel";
+import {
+  fitFrame,
+  markerColor,
+  padBox,
+  relevantPrevious,
+  retainMarkers,
+  type ThreadEntry,
+} from "@/lib/workspace";
 import type { VisionAnswer } from "@/lib/vision.functions";
 
 const mocks = vi.hoisted(() => ({ detect: vi.fn(), ask: vi.fn() }));
@@ -83,12 +91,37 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
 });
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("workspace geometry and context", () => {
+  it("keeps a tapped target identity and registers fresh annotations on retry", () => {
+    const selection = {
+      key: "candidate:7",
+      number: 8,
+      box: answer.annotations[0]!,
+      label: "Pear",
+      score: 0.65,
+    };
+    const entry: ThreadEntry = { id: "first", sender: "assistant", selection, answer };
+    const registered = retainMarkers(entry, []);
+    expect(registered[0]).toMatchObject({ key: selection.key, number: 1 });
+    const retried = retainMarkers(
+      {
+        ...entry,
+        markers: registered,
+        answer: {
+          ...answer,
+          annotations: [{ label: "Person", confidence: 0.9, x: 0.35, y: 0.2, w: 0.15, h: 0.6 }],
+        },
+      },
+      registered,
+    );
+    expect(retried[0]).toMatchObject({ label: "Person", number: 3 });
+  });
   it("contains landscape and portrait images without clipping", () => {
     expect(fitFrame(600, 600, 1200, 600)).toEqual({ left: 0, top: 150, width: 600, height: 300 });
     expect(fitFrame(600, 600, 600, 1200)).toEqual({ left: 150, top: 0, width: 300, height: 600 });
@@ -111,6 +144,68 @@ describe("workspace geometry and context", () => {
 });
 
 describe("split workspace interactions", () => {
+  it("rotates the plain thinking status without a spinner", () => {
+    vi.useFakeTimers();
+    const view = render(<ThinkingStatus />);
+    expect(screen.getByRole("status")).toHaveTextContent("Observing…");
+    act(() => vi.advanceTimersByTime(2400));
+    expect(screen.getByRole("status")).toHaveTextContent("Thinking…");
+    expect(view.container.querySelector("svg")).toBeNull();
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("retains earlier boxes during and after follow-ups, with stable numbering and explicit controls", async () => {
+    render(<Index />);
+    await upload();
+    ask("Find objects");
+    await screen.findByText("Two useful objects");
+    const first = screen.getByRole("button", { name: "Target 1: Pear" });
+    fireEvent.click(screen.getByRole("button", { name: "Show target 1: Pear" }));
+    const pending = deferred<{ answer: VisionAnswer }>();
+    mocks.ask.mockReturnValueOnce(pending.promise);
+    ask("Who is next to it?");
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(2));
+    expect(first).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Target 2: Cup" })).toBeInTheDocument();
+    await act(async () =>
+      pending.resolve({
+        answer: {
+          ...answer,
+          headline: "Another object",
+          suggestedMemory: null,
+          annotations: [{ label: "Person", confidence: 0.95, x: 0.35, y: 0.2, w: 0.15, h: 0.6 }],
+        },
+      }),
+    );
+    expect(first).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Target 3: Person" })).toBeInTheDocument();
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "Show target 3: Person" }));
+    expect(first).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear selected object" }));
+    expect(first).toBeInTheDocument();
+    ask("focus only on #3");
+    expect(screen.queryByRole("button", { name: "Target 1: Pear" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Target 3: Person" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Recenter photo" }));
+    expect(screen.getByRole("button", { name: "Target 1: Pear" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove annotation 1" }));
+    expect(screen.queryByRole("button", { name: "Target 1: Pear" })).toBeNull();
+    ask("show all annotations");
+    expect(screen.getByRole("button", { name: "Target 1: Pear" })).toBeInTheDocument();
+    ask("remove annotation 2");
+    expect(screen.queryByRole("button", { name: "Target 2: Cup" })).toBeNull();
+    expect(mocks.ask).toHaveBeenCalledTimes(2);
+  });
+  it("reuses existing annotation numbers when the same boxes are returned", async () => {
+    render(<Index />);
+    await upload();
+    ask("Find objects");
+    await screen.findByText("Two useful objects");
+    ask("Explain them");
+    await waitFor(() => expect(screen.getAllByText("Two useful objects")).toHaveLength(2));
+    expect(screen.getAllByRole("button", { name: "Target 1: Pear" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Target 2: Cup" })).toHaveLength(1);
+  });
   it("preserves landing, transitions on upload and keeps selected scene context through focus", async () => {
     render(<Index />);
     expect(screen.getByText("See more in every image.")).toBeInTheDocument();

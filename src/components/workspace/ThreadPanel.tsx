@@ -1,6 +1,6 @@
-import { ArrowLeft, ArrowUp, ImagePlus, LoaderCircle, Target, X } from "lucide-react";
+import { ArrowLeft, ArrowUp, Crosshair, ImagePlus, Target, X } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   answerMarkers,
@@ -25,9 +25,23 @@ type Props = {
   onRetry: (entry: ThreadEntry) => void;
   onMemory: (id: string, save: boolean) => void;
   onMarker: (marker: Marker) => void;
+  onRemoveMarker: (key: string) => void;
+  onFocusMarker: (key: string) => void;
   onHighlight: (key: string | null) => void;
   onActivate: (entry: ThreadEntry) => void;
 };
+export function ThinkingStatus() {
+  const [phase, setPhase] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setPhase((value) => (value + 1) % 2), 2400);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <p role="status" className="text-sm text-muted-foreground">
+      {phase === 0 ? "Observing…" : "Thinking…"}
+    </p>
+  );
+}
 export function ThreadPanel(props: Props) {
   const { thread, selection, activeEntry, highlighted } = props;
   const scroller = useRef<HTMLDivElement>(null);
@@ -41,7 +55,6 @@ export function ThreadPanel(props: Props) {
     node?.scrollIntoView({ block: "nearest", behavior: "auto" });
     if (node && !node.contains(document.activeElement)) node.focus({ preventScroll: true });
   }, [activeEntry]);
-  const pending = thread.some((entry) => entry.loading);
   return (
     <section aria-label="Conversation" className="thread-panel flex min-h-0 min-w-0 flex-col">
       <header className="shrink-0 px-3 py-2">
@@ -76,12 +89,7 @@ export function ThreadPanel(props: Props) {
           </div>
         </div>
         <p role="status" className="px-2 pb-1 text-xs text-muted-foreground">
-          {props.detectorState === "loading"
-            ? "Scanning photo…"
-            : props.detectorState === "failed"
-              ? "Detection unavailable · AI can still help"
-              : ""}
-          {pending ? " · Lumen is thinking…" : ""}
+          {props.detectorState === "failed" ? "Detection unavailable · AI can still help" : ""}
         </p>
       </header>
       <div
@@ -94,7 +102,7 @@ export function ThreadPanel(props: Props) {
             key={entry.id}
             id={`thread-${entry.id}`}
             tabIndex={-1}
-            className={`py-6 outline-none ${entry.sender === "assistant" ? "border-b border-border" : ""} ${activeEntry === entry.id ? "border-l-2 border-l-primary pl-3" : ""}`}
+            className="py-6 outline-none"
           >
             <p className="mb-2 text-[10px] uppercase text-muted-foreground">
               {entry.sender === "user" ? "You" : "Lumen"}
@@ -102,12 +110,7 @@ export function ThreadPanel(props: Props) {
             {entry.sender === "user" && (
               <p className="break-words text-sm leading-relaxed">{entry.question}</p>
             )}
-            {entry.loading && (
-              <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-                <LoaderCircle className="size-4 animate-spin" />
-                Looking at your photo…
-              </p>
-            )}
+            {entry.loading && <ThinkingStatus />}
             {entry.error && (
               <div role="status">
                 <p className="text-sm text-destructive">{entry.error}</p>
@@ -141,7 +144,7 @@ export function ThreadPanel(props: Props) {
                 {answerMarkers(entry).length > 0 && (
                   <ol className="mt-4 space-y-1">
                     {answerMarkers(entry).map((marker) => (
-                      <li key={marker.key}>
+                      <li key={marker.key} className="flex items-center">
                         <Button
                           variant="ghost"
                           className={`h-auto min-h-11 w-full justify-start whitespace-normal text-left ${highlighted === marker.key ? "bg-primary/10 text-primary" : ""}`}
@@ -161,6 +164,26 @@ export function ThreadPanel(props: Props) {
                             {marker.label}
                             {marker.score < 0.7 ? " · likely" : ""}
                           </span>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7 shrink-0"
+                          aria-label={`Focus only target ${marker.number}`}
+                          title="Focus only this annotation"
+                          onClick={() => props.onFocusMarker(marker.key)}
+                        >
+                          <Crosshair />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7 shrink-0"
+                          aria-label={`Remove annotation ${marker.number}`}
+                          title="Remove annotation"
+                          onClick={() => props.onRemoveMarker(marker.key)}
+                        >
+                          <X />
                         </Button>
                       </li>
                     ))}
@@ -260,12 +283,12 @@ export function ThreadPanel(props: Props) {
             }}
             placeholder="Ask about this object or the whole photo..."
             aria-label="Ask about this object or the whole photo"
-            className="min-w-0 resize-none bg-transparent py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            className="min-w-0 resize-none border-0 bg-transparent py-2 text-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0"
           />
           <Button
             type="submit"
             size="icon"
-            className="mb-2 min-h-11 min-w-11 rounded-full"
+            className="mb-2 size-8 rounded-full [&_svg]:size-3.5"
             disabled={!props.question.trim()}
             aria-label="Ask"
             title="Ask"
