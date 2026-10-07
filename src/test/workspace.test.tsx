@@ -8,7 +8,10 @@ import {
   padBox,
   relevantPrevious,
   retainMarkers,
+  cropFullResolution,
+  toggleComparison,
   type ThreadEntry,
+  type Selection,
 } from "@/lib/workspace";
 import type { VisionAnswer } from "@/lib/vision.functions";
 
@@ -84,6 +87,12 @@ beforeEach(() => {
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(800);
   vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(600);
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.stubGlobal("PointerEvent", MouseEvent);
+  Element.prototype.setPointerCapture = vi.fn();
+  Element.prototype.hasPointerCapture = vi.fn().mockReturnValue(true);
+  Element.prototype.releasePointerCapture = vi.fn();
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
     drawImage: vi.fn(),
   } as unknown as CanvasRenderingContext2D);
@@ -98,6 +107,31 @@ afterEach(() => {
 });
 
 describe("workspace geometry and context", () => {
+  it("extracts lossless crops at source resolution without shrinking pixels", () => {
+    vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(4000);
+    vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(3000);
+    const draw = vi.fn();
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({
+      drawImage: draw,
+    } as unknown as CanvasRenderingContext2D);
+    const image = document.createElement("img");
+    cropFullResolution(image, { x: 0.1, y: 0.2, w: 0.4, h: 0.5 });
+    expect(draw).toHaveBeenCalledWith(image, 400, 600, 1600, 1500, 0, 0, 1600, 1500);
+    expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenCalledWith("image/png");
+  });
+  it("caps comparison at four while allowing deselection", () => {
+    const targets = Array.from({ length: 5 }, (_, index) => ({
+      key: String(index),
+      number: index + 1,
+      box: { x: 0, y: 0, w: 0.1, h: 0.1 },
+      label: "Object",
+      score: 1,
+    }));
+    let selected: Selection[] = [];
+    for (const target of targets) selected = toggleComparison(selected, target);
+    expect(selected).toHaveLength(4);
+    expect(toggleComparison(selected, targets[0]!)).toHaveLength(3);
+  });
   it("keeps a tapped target identity and registers fresh annotations on retry", () => {
     const selection = {
       key: "candidate:7",
@@ -144,6 +178,157 @@ describe("workspace geometry and context", () => {
 });
 
 describe("split workspace interactions", () => {
+  it("enforces the four-target limit in the canvas and frees a slot on deselection", async () => {
+    mocks.ask.mockResolvedValue({
+      answer: {
+        ...answer,
+        annotations: Array.from({ length: 5 }, (_, index) => ({
+          label: `Object ${index + 1}`,
+          confidence: 0.9,
+          x: 0.02 + index * 0.19,
+          y: 0.1,
+          w: 0.12,
+          h: 0.2,
+        })),
+      },
+    });
+    render(<Index />);
+    await upload();
+    ask("Find objects");
+    await screen.findByText("Two useful objects");
+    fireEvent.click(screen.getByRole("button", { name: "Compare (C)" }));
+    for (let number = 1; number <= 5; number++)
+      fireEvent.click(screen.getByRole("button", { name: `Target ${number}: Object ${number}` }));
+    expect(screen.getByRole("button", { name: "Target 4: Object 4" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Target 5: Object 5" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Target 1: Object 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Target 5: Object 5" }));
+    expect(screen.getByRole("button", { name: "Target 5: Object 5" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+  });
+  it("zooms a target, sends a dedicated deep crop, and resets without removing annotations", async () => {
+    render(<Index />);
+    await upload();
+    ask("Find objects");
+    await screen.findByText("Two useful objects");
+    fireEvent.click(screen.getByRole("button", { name: "Focus Zoom (Z)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Target 2: Cup" }));
+    expect(screen.getByTestId("zoom-layer").style.transform).not.toContain("scale(1)");
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(2));
+    expect(mocks.ask.mock.calls[1]![0].data).toMatchObject({
+      mode: "selection",
+      deepInspection: true,
+      targets: [{ number: 2, label: "Cup" }],
+    });
+    expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenCalledWith("image/png");
+    expect(screen.getByText("Deep crop inspection · original resolution")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.getByTestId("zoom-layer").style.transform).toBe("translate(0px, 0px) scale(1)");
+    expect(screen.getByRole("button", { name: "Target 1: Pear" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Target 2: Cup" }));
+    fireEvent.click(screen.getByRole("button", { name: "Recenter photo" }));
+    expect(screen.getByTestId("zoom-layer").style.transform).toBe("translate(0px, 0px) scale(1)");
+  });
+  it("compares targets with multiple crops and renders the structured result", async () => {
+    render(<Index />);
+    await upload();
+    ask("Find objects");
+    await screen.findByText("Two useful objects");
+    fireEvent.keyDown(window, { key: "c" });
+    expect(screen.getByRole("button", { name: "Compare (C)" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Target 1: Pear" }));
+    expect(screen.getByRole("button", { name: /^Ask$/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Target 2: Cup" }));
+    expect(screen.getByText("Comparing: #01 Pear, #02 Cup")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Target 1: Pear" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    mocks.ask.mockImplementationOnce(({ data }) =>
+      Promise.resolve({
+        answer: {
+          ...answer,
+          headline: "Comparison ready",
+          suggestedMemory: null,
+          annotations: [],
+          comparison: data.targets.map((target: { id: string; label: string }) => ({
+            targetId: target.id,
+            title: target.label,
+            condition: "No visible damage",
+            dimensionsAndStyle: "No scale available",
+            details: "Surface looks smooth",
+          })),
+        },
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Compare condition & wear" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Ask$/ }));
+    await screen.findByText("Comparison ready");
+    expect(mocks.ask.mock.calls[1]![0].data).toMatchObject({
+      mode: "comparison",
+      targets: [
+        { number: 1, label: "Pear" },
+        { number: 2, label: "Cup" },
+      ],
+    });
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getAllByText("No visible damage")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Clear comparison" }));
+    expect(screen.getByText("Comparing: Select 2–4 objects")).toBeInTheDocument();
+  });
+  it("draws and cancels regions, then retains a submitted Custom marker through answers", async () => {
+    render(<Index />);
+    await upload();
+    fireEvent.keyDown(window, { key: "r" });
+    const stage = screen.getByTestId("image-stage");
+    const draw = () => {
+      fireEvent.pointerDown(stage, { button: 0, clientX: 160, clientY: 120 });
+      fireEvent.pointerMove(stage, { clientX: 400, clientY: 300 });
+      fireEvent.pointerUp(stage, { clientX: 400, clientY: 300 });
+    };
+    draw();
+    expect(screen.getByRole("form", { name: "Ask about drawn area" })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Ask about this area" }), {
+      key: "Escape",
+    });
+    expect(screen.queryByRole("form", { name: "Ask about drawn area" })).toBeNull();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    draw();
+    fireEvent.change(screen.getByRole("textbox", { name: "Ask about this area" }), {
+      target: { value: "Read this label" },
+    });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Ask about this area" }), { key: "v" });
+    expect(screen.getByRole("button", { name: "Draw Box (R)" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.submit(screen.getByRole("form", { name: "Ask about drawn area" }));
+    expect(screen.getByRole("button", { name: "Target 1: Custom" })).toBeInTheDocument();
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+    await screen.findByText("Two useful objects");
+    expect(mocks.ask.mock.calls[0]![0].data).toMatchObject({
+      mode: "selection",
+      question: "Read this label",
+      detectorLabel: "Custom",
+    });
+    expect(screen.getByRole("button", { name: "Target 1: Custom" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show target 1: Custom" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Pointer (V)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Target 1: Custom" }));
+    expect(screen.getByText("Target #1 · Custom")).toBeInTheDocument();
+  });
   it("rotates the plain thinking status without a spinner", () => {
     vi.useFakeTimers();
     const view = render(<ThinkingStatus />);

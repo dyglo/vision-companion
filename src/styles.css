@@ -240,6 +240,7 @@
   height: var(--artifact-height, 100%);
 }
 .canvas-panel {
+  container: inspection-canvas / inline-size;
   height: 100%;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -298,6 +299,21 @@
 .object-box.is-highlighted {
   border-width: 3px;
   box-shadow: 0 0 0 1px var(--canvas);
+}
+.canvas-zoom {
+  transition: transform 350ms ease;
+}
+@container inspection-canvas (max-width: 320px) {
+  .canvas-tool-dock {
+    top: 52px;
+  }
+  .canvas-image-stage {
+    top: 96px;
+  }
+}
+.object-box.is-comparing {
+  border-width: 3px;
+  box-shadow: 0 0 0 2px var(--canvas), 0 0 0 4px currentColor;
 }
 .object-pin:focus-visible {
   outline: 2px solid currentColor;
