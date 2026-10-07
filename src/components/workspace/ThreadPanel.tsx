@@ -34,7 +34,7 @@ export function ThreadPanel(props: Props) {
     if (!activeEntry) return;
     const node = document.getElementById(`thread-${activeEntry}`);
     node?.scrollIntoView({ block: "nearest", behavior: "auto" });
-    node?.focus({ preventScroll: true });
+    if (node && !node.contains(document.activeElement)) node.focus({ preventScroll: true });
   }, [activeEntry]);
   const pending = thread.some((entry) => entry.loading);
   return (
@@ -94,7 +94,6 @@ export function ThreadPanel(props: Props) {
             key={entry.id}
             id={`thread-${entry.id}`}
             tabIndex={-1}
-            onFocus={() => props.onActivate(entry)}
             className={`py-6 outline-none ${entry.sender === "assistant" ? "border-b border-border" : ""} ${activeEntry === entry.id ? "border-l-2 border-l-primary pl-3" : ""}`}
           >
             <p className="mb-2 text-[10px] uppercase text-muted-foreground">
@@ -104,6 +103,9 @@ export function ThreadPanel(props: Props) {
               <>
                 <h1 className="text-xl font-medium">What would you like to explore?</h1>
                 <p className="mt-2 text-sm text-muted-foreground">Your photo is ready.</p>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Tap an object or ask about the whole photo.
+                </p>
               </>
             )}
             {entry.sender === "user" && (
@@ -156,7 +158,6 @@ export function ThreadPanel(props: Props) {
                           onMouseEnter={() => props.onHighlight(marker.key)}
                           onMouseLeave={() => props.onHighlight(null)}
                           onFocus={() => {
-                            props.onActivate(entry);
                             props.onHighlight(marker.key);
                           }}
                           onBlur={() => props.onHighlight(null)}
@@ -212,6 +213,11 @@ export function ThreadPanel(props: Props) {
                         Skip
                       </Button>
                     </div>
+                    {entry.memoryError && (
+                      <p role="status" className="mt-2 text-xs text-destructive">
+                        {entry.memoryError}
+                      </p>
+                    )}
                   </div>
                 )}
                 {entry.memoryState === "saved" && (

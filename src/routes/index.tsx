@@ -12,6 +12,7 @@ import {
   answerMarkers,
   clampBox,
   relevantPrevious,
+  padBox,
   type Box,
   type Marker,
   type Selection,
@@ -54,7 +55,7 @@ function toDataUrl(img: HTMLImageElement, box: Box | null, max: number) {
   return canvas.toDataURL("image/jpeg", 0.85);
 }
 
-function Index() {
+export function Index() {
   const [src, setSrc] = useState<string | null>(null);
   const [detections, setDetections] = useState<Detection[]>([]);
   const [detectorState, setDetectorState] = useState("idle");
@@ -63,6 +64,7 @@ function Index() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [activeEntry, setActiveEntry] = useState<string | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
+  const [previewEntry, setPreviewEntry] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const imageRef = useRef<HTMLImageElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -88,12 +90,14 @@ function Index() {
     setSelection(null);
     setActiveEntry(null);
     setHighlighted(null);
+    setPreviewEntry(null);
     setQuestion("");
   };
   const clearResult = () => {
     setSelection(null);
     setActiveEntry(null);
     setHighlighted(null);
+    setPreviewEntry(null);
   };
   const pick = (file?: File | null) => {
     if (!file?.type.startsWith("image/")) return;
@@ -119,8 +123,10 @@ function Index() {
       );
     update();
     viewport?.addEventListener("resize", update);
+    window.addEventListener("resize", update);
     return () => {
       viewport?.removeEventListener("resize", update);
+      window.removeEventListener("resize", update);
       document.documentElement.style.removeProperty("--workspace-height");
     };
   }, []);
@@ -159,7 +165,7 @@ function Index() {
       const result = await ask({
         data: {
           image: toDataUrl(image, null, 1280),
-          crop: toDataUrl(image, selected?.box ?? null, selected ? 512 : 1280),
+          crop: toDataUrl(image, selected ? padBox(selected.box) : null, selected ? 512 : 1280),
           mode: selected ? "selection" : "scene",
           detectorLabel: selected?.label ?? null,
           detectorScore: selected?.score ?? null,
@@ -229,6 +235,7 @@ function Index() {
     if (entry.sender !== "assistant" || entry.welcome) return;
     setActiveEntry(entry.id);
     setSelection(entry.selection ?? null);
+    setPreviewEntry(null);
   };
   const selectMarker = (marker: Marker) => {
     const selected: Selection = {
@@ -240,6 +247,7 @@ function Index() {
     };
     setSelection(selected);
     setHighlighted(marker.key);
+    setPreviewEntry(null);
     if (marker.entryId) {
       setActiveEntry(marker.entryId);
       return;
@@ -262,6 +270,19 @@ function Index() {
     void run(entry);
   };
   const onTap = (x: number, y: number) => {
+    const visibleHit = markers
+      .filter(
+        (marker) =>
+          x >= marker.box.x &&
+          x <= marker.box.x + marker.box.w &&
+          y >= marker.box.y &&
+          y <= marker.box.y + marker.box.h,
+      )
+      .sort((a, b) => a.box.w * a.box.h - b.box.w * b.box.h)[0];
+    if (visibleHit) {
+      selectMarker(visibleHit);
+      return;
+    }
     const candidates = detections
       .map((item, index) => ({ item, index }))
       .filter(
@@ -287,7 +308,7 @@ function Index() {
           },
     );
   };
-  const active = thread.find((entry) => entry.id === activeEntry);
+  const active = thread.find((entry) => entry.id === (previewEntry ?? activeEntry));
   const historical = active ? answerMarkers(active) : [];
   const markers: Marker[] = historical.length
     ? historical
@@ -298,6 +319,13 @@ function Index() {
         label: item.label,
         score: item.score,
       }));
+  const highlightMarker = (key: string | null) => {
+    setHighlighted(key);
+    const owner = key
+      ? thread.find((entry) => answerMarkers(entry).some((marker) => marker.key === key))
+      : null;
+    setPreviewEntry(owner?.id ?? null);
+  };
   const hasResult = false;
   const input = (
     <input
@@ -343,26 +371,34 @@ function Index() {
             try {
               if (
                 save &&
-                !loadMemories().some((memory) => memory.text === entry.answer?.suggestedMemory)
+                !loadMemories().some(
+                  (memory) =>
+                    memory.text.toLowerCase() === entry.answer?.suggestedMemory?.toLowerCase(),
+                )
               )
                 addMemory(entry.answer.suggestedMemory);
               changeThread((items) =>
                 items.map((item) =>
-                  item.id === id ? { ...item, memoryState: save ? "saved" : "skipped" } : item,
+                  item.id === id
+                    ? { ...item, memoryState: save ? "saved" : "skipped", memoryError: undefined }
+                    : item,
                 ),
               );
             } catch {
               changeThread((items) =>
                 items.map((item) =>
                   item.id === id
-                    ? { ...item, error: "Couldn't save memory in this browser. Please try again." }
+                    ? {
+                        ...item,
+                        memoryError: "Couldn't save memory in this browser. Please try again.",
+                      }
                     : item,
                 ),
               );
             }
           }}
           onMarker={selectMarker}
-          onHighlight={setHighlighted}
+          onHighlight={highlightMarker}
           onActivate={activate}
         />
         <CanvasPanel

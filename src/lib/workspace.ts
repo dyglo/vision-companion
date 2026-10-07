@@ -12,12 +12,13 @@ export type ThreadEntry = {
   sender: "user" | "assistant";
   question?: string;
   selection?: Selection | null;
-  answer?: VisionAnswer;
+  answer?: VisionAnswer | undefined;
   loading?: boolean;
-  error?: string;
+  error?: string | undefined;
+  memoryError?: string | undefined;
   welcome?: boolean;
   previous?: string | null;
-  memoryState?: "offered" | "saved" | "skipped";
+  memoryState?: "offered" | "saved" | "skipped" | undefined;
 };
 export type Marker = {
   key: string;
@@ -52,9 +53,27 @@ export function relevantPrevious(thread: ThreadEntry[], selection: Selection | n
   const entry = [...thread]
     .reverse()
     .find((item) => item.answer && (item.selection?.key ?? null) === (selection?.key ?? null));
-  return entry?.answer
-    ? `${entry.answer.headline} ${entry.answer.explanation}`.slice(0, 4000)
+  if (entry?.answer) return `${entry.answer.headline} ${entry.answer.explanation}`.slice(0, 4000);
+  // A scene marker has no standalone object answer yet; retain its scene context.
+  const scene =
+    selection &&
+    thread.find((item) => answerMarkers(item).some((marker) => marker.key === selection.key));
+  return scene?.answer
+    ? `Selected target #${selection?.number}: ${selection?.label}. Previous scene answer: ${scene.answer.headline} ${scene.answer.explanation}`.slice(
+        0,
+        4000,
+      )
     : null;
+}
+export function padBox(box: Box, amount = 0.15): Box {
+  const x = Math.max(0, box.x - box.w * amount),
+    y = Math.max(0, box.y - box.h * amount);
+  return clampBox({
+    x,
+    y,
+    w: Math.min(1, box.x + box.w * (1 + amount)) - x,
+    h: Math.min(1, box.y + box.h * (1 + amount)) - y,
+  });
 }
 export function answerMarkers(entry: ThreadEntry): Marker[] {
   if (entry.answer?.annotations.length)
