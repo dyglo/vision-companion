@@ -210,6 +210,23 @@
 .thread-panel {
   min-width: 0;
 }
+.thread-panel [aria-label="Conversation history"] {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--foreground) 22%, transparent) transparent;
+}
+.thread-panel [aria-label="Conversation history"]::-webkit-scrollbar {
+  width: 6px;
+}
+.thread-panel [aria-label="Conversation history"]::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thread-panel [aria-label="Conversation history"]::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--foreground) 22%, transparent);
+}
+.thread-panel [aria-label="Conversation history"]::-webkit-scrollbar-button {
+  display: none;
+}
 .composer {
   margin: 0 0 max(0px, env(safe-area-inset-bottom));
   border-radius: 26px;
