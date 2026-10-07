@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { ImagePlus, X } from "lucide-react";
+import { ImagePlus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { detect, type Detection } from "@/lib/detector";
@@ -602,7 +602,6 @@ export function Index() {
   const highlightMarker = (key: string | null) => {
     setHighlighted(key);
   };
-  const hasResult = false;
   const input = (
     <input
       ref={fileRef}
@@ -707,7 +706,7 @@ export function Index() {
     );
   return (
     <div
-      className="relative h-dvh w-full overflow-hidden bg-background"
+      className="lumen-landing relative isolate min-h-dvh w-full overflow-hidden"
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();
@@ -715,67 +714,104 @@ export function Index() {
       }}
     >
       {input}
-      <header className="pointer-events-none absolute inset-x-0 top-0 z-20 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center bg-gradient-to-b from-scrim-strong to-transparent px-4 pb-12 pt-4 text-[10px] uppercase md:px-8 md:pt-5">
-        <nav className="pointer-events-auto flex min-w-0 items-center gap-1">
-          <Button
-            asChild
-            variant="ghost"
-            size="sm"
-            className="h-8 px-2 text-[10px] uppercase tracking-normal text-foreground/80 hover:text-foreground"
+      <div className="lumen-landing-grid pointer-events-none absolute inset-0" aria-hidden="true" />
+      <svg
+        className="lumen-landing-waves pointer-events-none absolute inset-x-0 bottom-0 h-[30%] w-full"
+        viewBox="0 0 1440 240"
+        preserveAspectRatio="none"
+        fill="none"
+        aria-hidden="true"
+      >
+        <defs>
+          <linearGradient
+            id="lumen-wave"
+            x1="0"
+            y1="0"
+            x2="1440"
+            y2="0"
+            gradientUnits="userSpaceOnUse"
           >
-            <Link to="/memory">Memory</Link>
-          </Button>
-          {src && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 px-2 text-[10px] uppercase tracking-normal text-foreground/80 hover:text-foreground"
-              onClick={() => fileRef.current?.click()}
-            >
-              <ImagePlus /> <span className="hidden sm:inline">New photo</span>
-            </Button>
-          )}
+            <stop stopColor="oklch(0.65 0.18 255)" stopOpacity="0.15" />
+            <stop offset="0.5" stopColor="oklch(0.85 0.12 220)" stopOpacity="0.55" />
+            <stop offset="1" stopColor="oklch(0.65 0.18 255)" stopOpacity="0.15" />
+          </linearGradient>
+        </defs>
+        <g stroke="url(#lumen-wave)" strokeWidth="1" vectorEffect="non-scaling-stroke">
+          <path d="M-80 160 C100 40 200 35 370 135 S580 225 760 135 S1100 65 1520 165" />
+          <path d="M-80 100 C130 245 220 225 400 130 S600 40 800 135 S1150 215 1520 105" />
+          <path d="M-80 185 C220 215 420 205 680 140 S1140 95 1520 175" opacity="0.4" />
+        </g>
+      </svg>
+      <header className="pointer-events-none absolute inset-x-0 top-0 z-20 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center px-6 py-6 sm:px-10 sm:py-8">
+        <nav className="flex min-w-0 items-center" aria-label="Utility navigation">
+          <Link
+            to="/memory"
+            className="pointer-events-auto rounded-sm py-2 text-[11px] uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+          >
+            Memory
+          </Link>
         </nav>
-        <span className="text-sm font-medium normal-case text-foreground">lumen</span>
+        <span className="text-sm font-medium tracking-wide text-foreground">lumen</span>
         <div className="flex justify-end">
-          {src && hasResult ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="pointer-events-auto size-8 text-foreground/80 hover:text-foreground"
-              onClick={clearResult}
-              aria-label="Clear result"
-              title="Clear result"
-            >
-              <X />
-            </Button>
-          ) : (
-            <span className="truncate text-right text-foreground/55">
-              {detectorState === "loading" && "Scanning"}
-              {detectorState === "ready" && `${detections.length} found`}
-              {detectorState === "failed" && "Ready"}
-            </span>
-          )}
+          <svg
+            className="lumen-landing-emblem size-8"
+            viewBox="0 0 32 32"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle cx="16" cy="16" r="11.5" stroke="currentColor" strokeWidth="1" />
+            <circle
+              cx="16"
+              cy="16"
+              r="7.5"
+              stroke="currentColor"
+              strokeWidth="0.75"
+              opacity="0.5"
+            />
+            <path
+              d="M16 4.5 A11.5 11.5 0 0 1 27.5 16"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+          </svg>
         </div>
       </header>
 
       {!src && (
-        <main className="flex h-full flex-col items-center justify-center px-6 text-center">
-          <p className="mb-6 text-[10px] uppercase text-muted-foreground">Lumen vision</p>
-          <h1 className="max-w-lg text-4xl font-medium leading-tight md:text-5xl">
+        <main className="relative z-10 flex min-h-dvh flex-col items-center justify-center px-6 pb-32 pt-28 text-center sm:pb-40">
+          <p className="mb-7 inline-flex items-center gap-2 rounded-full border border-foreground/10 bg-foreground/5 px-3.5 py-1.5 text-[10px] uppercase tracking-[0.2em] text-foreground/75 backdrop-blur-md">
+            <span className="lumen-landing-dot size-1 rounded-full" aria-hidden="true" />
+            Lumen vision
+          </p>
+          <h1 className="max-w-3xl text-4xl font-medium leading-[1.08] tracking-tight text-foreground sm:text-5xl md:text-6xl">
             See more in every image.
           </h1>
-          <p className="mt-4 max-w-sm text-sm leading-relaxed text-muted-foreground">
-            Choose a photo. Tap one thing, or ask about everything you want to find.
+          <p className="mt-5 max-w-lg text-sm leading-relaxed text-muted-foreground/80 sm:text-base">
+            Tap any object to inspect details, read fine texture, or ask Lumen to explain the whole
+            scene.
           </p>
           <Button
             variant="outline"
-            className="mt-9 rounded-none border-foreground/60 bg-transparent px-6 text-xs uppercase tracking-normal"
+            className="mt-9 h-14 gap-3 rounded-full border-foreground/15 bg-foreground/5 px-6 text-sm font-medium text-foreground shadow-xl backdrop-blur-md transition-all hover:border-foreground/30 hover:bg-foreground/10 hover:shadow-cyan-500/10 active:scale-[0.98]"
             onClick={() => fileRef.current?.click()}
           >
-            Choose a photo
+            <ImagePlus className="size-[18px] text-foreground/80" aria-hidden="true" />
+            <span>Choose a photo</span>
+            <span
+              className="ml-2 border-l border-foreground/15 pl-3 text-[10px] font-normal uppercase tracking-wider text-foreground/50"
+              aria-hidden="true"
+            >
+              Drop
+            </span>
           </Button>
-          <p className="mt-4 text-[11px] text-muted-foreground/70">or drop one anywhere</p>
+          <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground/70">
+            or drag and drop anywhere · JPG, PNG, WEBP
+          </p>
+          <p className="mt-10 inline-flex items-center gap-2 rounded-full border border-foreground/10 bg-foreground/[0.03] px-3.5 py-2 text-[10px] tracking-wide text-foreground/60 backdrop-blur-md">
+            <span className="lumen-landing-dot size-1 rounded-full" aria-hidden="true" />
+            In-browser detection <span aria-hidden="true">·</span> Start with a photo
+          </p>
         </main>
       )}
     </div>
