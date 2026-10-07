@@ -10,7 +10,9 @@ import { ThreadPanel } from "@/components/workspace/ThreadPanel";
 import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
 import { CanvasPanel } from "@/components/workspace/CanvasPanel";
 import {
-  answerMarkers,
+  conversationMarkers,
+  retainMarkers,
+  sameObjectBox,
   clampBox,
   relevantPrevious,
   padBox,
@@ -65,7 +67,8 @@ export function Index() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [activeEntry, setActiveEntry] = useState<string | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
-  const [previewEntry, setPreviewEntry] = useState<string | null>(null);
+  const [removedMarkers, setRemovedMarkers] = useState<string[]>([]);
+  const [focusedMarker, setFocusedMarker] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const imageRef = useRef<HTMLImageElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -91,14 +94,15 @@ export function Index() {
     setSelection(null);
     setActiveEntry(null);
     setHighlighted(null);
-    setPreviewEntry(null);
+    setRemovedMarkers([]);
+    setFocusedMarker(null);
     setQuestion("");
   };
   const clearResult = () => {
     setSelection(null);
     setActiveEntry(null);
     setHighlighted(null);
-    setPreviewEntry(null);
+    setFocusedMarker(null);
   };
   const pick = (file?: File | null) => {
     if (!file?.type.startsWith("image/")) return;
@@ -195,7 +199,16 @@ export function Index() {
             .slice(0, 40)
             .map((item, index) => ({ id: index + 1, ...item })),
           question: entry.question ?? null,
-          previous: entry.previous ?? null,
+          previous:
+            [
+              entry.previous,
+              conversationMarkers(threadRef.current).length
+                ? `Existing canvas annotations: ${JSON.stringify(conversationMarkers(threadRef.current).map(({ number, label, box }) => ({ number, label, box })))}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join("\n")
+              .slice(0, 4000) || null,
           memories: loadMemories()
             .map((memory) => memory.text)
             .slice(0, 50),
@@ -203,6 +216,23 @@ export function Index() {
       });
       if (epoch !== generation.current || attempts.current.get(entry.id) !== attempt) return;
       const answer = result.answer;
+      const registered = answer
+        ? retainMarkers(
+            { ...entry, selection: selected, answer },
+            conversationMarkers(threadRef.current),
+          )
+        : (threadRef.current.find((item) => item.id === entry.id)?.markers ?? []);
+      const selectedMarker =
+        selected && registered.find((marker) => sameObjectBox(marker.box, selected.box));
+      const retainedSelection =
+        selected && selectedMarker
+          ? { ...selected, key: selectedMarker.key, number: selectedMarker.number }
+          : selected;
+      if (selected && retainedSelection) {
+        const oldKey = selected.key;
+        const target = retainedSelection;
+        setSelection((current) => (current?.key === oldKey ? target : current));
+      }
       changeThread((items) =>
         items.map((item) =>
           item.id !== entry.id
@@ -211,6 +241,8 @@ export function Index() {
                 ...item,
                 loading: false,
                 answer,
+                markers: registered,
+                selection: retainedSelection,
                 error: result.error ?? (!answer ? "No answer received. Please retry." : undefined),
                 memoryState:
                   answer?.suggestedMemory &&
@@ -236,6 +268,41 @@ export function Index() {
   const submit = () => {
     const text = question.trim();
     if (!text || !imageRef.current?.naturalWidth) return;
+    const requestedNumber = /(?:#|target\s+|annotation\s+)(\d+)/i.exec(text)?.[1];
+    const requested = requestedNumber
+      ? conversationMarkers(threadRef.current).find(
+          (marker) => marker.number === Number(requestedNumber),
+        )
+      : /\b(?:this|selected)\b/i.test(text)
+        ? selection
+        : null;
+    let canvasCommand = false;
+    if (/^(?:please\s+)?(?:remove|clear|hide)\b/i.test(text)) {
+      if (/\b(?:all annotations|all boxes|all bounding boxes)\b/i.test(text)) {
+        setRemovedMarkers(conversationMarkers(threadRef.current).map((marker) => marker.key));
+        canvasCommand = true;
+      } else if (requested) {
+        setRemovedMarkers((keys) => [...keys, requested.key]);
+        canvasCommand = true;
+      }
+    }
+    if (/\b(?:focus only|only focus|show only)\b/i.test(text) && requested) {
+      setFocusedMarker(requested.key);
+      canvasCommand = true;
+    }
+    if (/\b(?:show|restore) all (?:annotations|boxes|bounding boxes)\b/i.test(text)) {
+      setFocusedMarker(null);
+      setRemovedMarkers([]);
+      canvasCommand = true;
+    }
+    if (canvasCommand) {
+      changeThread((items) => [
+        ...items,
+        { id: crypto.randomUUID(), sender: "user", question: text, selection },
+      ]);
+      setQuestion("");
+      return;
+    }
     const entry: ThreadEntry = {
       id: crypto.randomUUID(),
       sender: "assistant",
@@ -257,7 +324,6 @@ export function Index() {
     if (entry.sender !== "assistant") return;
     setActiveEntry(entry.id);
     setSelection(entry.selection ?? null);
-    setPreviewEntry(null);
   };
   const selectMarker = (marker: Marker) => {
     const selected: Selection = {
@@ -269,7 +335,6 @@ export function Index() {
     };
     setSelection(selected);
     setHighlighted(marker.key);
-    setPreviewEntry(null);
     if (marker.entryId) {
       setActiveEntry(marker.entryId);
       return;
@@ -330,14 +395,12 @@ export function Index() {
           },
     );
   };
-  const active = thread.find((entry) => entry.id === (previewEntry ?? activeEntry));
-  const markers: Marker[] = active?.answer ? answerMarkers(active) : [];
+  const markers = conversationMarkers(thread).filter(
+    (marker) =>
+      !removedMarkers.includes(marker.key) && (!focusedMarker || marker.key === focusedMarker),
+  );
   const highlightMarker = (key: string | null) => {
     setHighlighted(key);
-    const owner = key
-      ? thread.find((entry) => answerMarkers(entry).some((marker) => marker.key === key))
-      : null;
-    setPreviewEntry(owner?.id ?? null);
   };
   const hasResult = false;
   const input = (
@@ -405,6 +468,11 @@ export function Index() {
               }
             }}
             onMarker={selectMarker}
+            onRemoveMarker={(key) => {
+              setRemovedMarkers((keys) => [...keys, key]);
+              if (selection?.key === key) clearResult();
+            }}
+            onFocusMarker={(key) => setFocusedMarker(key)}
             onHighlight={highlightMarker}
             onActivate={activate}
           />

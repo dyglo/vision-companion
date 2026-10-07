@@ -14,6 +14,7 @@ export type ThreadEntry = {
   selection?: Selection | null;
   answer?: VisionAnswer | undefined;
   loading?: boolean;
+  markers?: Marker[];
   error?: string | undefined;
   memoryError?: string | undefined;
   previous?: string | null;
@@ -75,6 +76,7 @@ export function padBox(box: Box, amount = 0.15): Box {
   });
 }
 export function answerMarkers(entry: ThreadEntry): Marker[] {
+  if (entry.markers) return entry.markers;
   if (entry.answer?.annotations.length)
     return entry.answer.annotations.map((a, index) => ({
       key: `${entry.id}:${index}`,
@@ -96,6 +98,46 @@ export function answerMarkers(entry: ThreadEntry): Marker[] {
         },
       ]
     : [];
+}
+
+export function conversationMarkers(thread: ThreadEntry[]): Marker[] {
+  const markers = new Map<string, Marker>();
+  for (const entry of thread)
+    for (const marker of entry.markers ?? []) markers.set(marker.key, marker);
+  return [...markers.values()];
+}
+
+// Match repeated annotations by geometry, not their changing descriptive labels.
+export function sameObjectBox(a: Box, b: Box) {
+  const intersection =
+    Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) *
+    Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  return intersection / (a.w * a.h + b.w * b.h - intersection) > 0.65;
+}
+
+export function retainMarkers(entry: ThreadEntry, existing: Marker[]): Marker[] {
+  let next = Math.max(0, ...existing.map((marker) => marker.number)) + 1;
+  const assigned: Marker[] = [];
+  for (const candidate of answerMarkers({
+    id: entry.id,
+    sender: entry.sender,
+    answer: entry.answer,
+    selection: entry.selection ?? null,
+  })) {
+    const match = [...existing, ...assigned].find((marker) =>
+      sameObjectBox(marker.box, candidate.box),
+    );
+    const marker = match ?? {
+      ...candidate,
+      key:
+        entry.selection && sameObjectBox(entry.selection.box, candidate.box)
+          ? entry.selection.key
+          : candidate.key,
+      number: next++,
+    };
+    if (!assigned.some((item) => item.key === marker.key)) assigned.push(marker);
+  }
+  return assigned;
 }
 
 export function markerColor(label: string) {
