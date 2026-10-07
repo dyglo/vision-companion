@@ -714,68 +714,16 @@ export function Index() {
       }}
     >
       {input}
-      <div className="lumen-landing-grid pointer-events-none absolute inset-0" aria-hidden="true" />
-      <svg
-        className="lumen-landing-waves pointer-events-none absolute inset-x-0 bottom-0 h-[30%] w-full"
-        viewBox="0 0 1440 240"
-        preserveAspectRatio="none"
-        fill="none"
-        aria-hidden="true"
-      >
-        <defs>
-          <linearGradient
-            id="lumen-wave"
-            x1="0"
-            y1="0"
-            x2="1440"
-            y2="0"
-            gradientUnits="userSpaceOnUse"
-          >
-            <stop stopColor="oklch(0.65 0.18 255)" stopOpacity="0.15" />
-            <stop offset="0.5" stopColor="oklch(0.85 0.12 220)" stopOpacity="0.55" />
-            <stop offset="1" stopColor="oklch(0.65 0.18 255)" stopOpacity="0.15" />
-          </linearGradient>
-        </defs>
-        <g stroke="url(#lumen-wave)" strokeWidth="1" vectorEffect="non-scaling-stroke">
-          <path d="M-80 160 C100 40 200 35 370 135 S580 225 760 135 S1100 65 1520 165" />
-          <path d="M-80 100 C130 245 220 225 400 130 S600 40 800 135 S1150 215 1520 105" />
-          <path d="M-80 185 C220 215 420 205 680 140 S1140 95 1520 175" opacity="0.4" />
-        </g>
-      </svg>
       <header className="pointer-events-none absolute inset-x-0 top-0 z-20 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center px-6 py-6 sm:px-10 sm:py-8">
         <nav className="flex min-w-0 items-center" aria-label="Utility navigation">
           <Link
             to="/memory"
             className="pointer-events-auto rounded-sm py-2 text-[11px] uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
           >
-            Memory
+            Deplyze
           </Link>
         </nav>
         <span className="text-sm font-medium tracking-wide text-foreground">lumen</span>
-        <div className="flex justify-end">
-          <svg
-            className="lumen-landing-emblem size-8"
-            viewBox="0 0 32 32"
-            fill="none"
-            aria-hidden="true"
-          >
-            <circle cx="16" cy="16" r="11.5" stroke="currentColor" strokeWidth="1" />
-            <circle
-              cx="16"
-              cy="16"
-              r="7.5"
-              stroke="currentColor"
-              strokeWidth="0.75"
-              opacity="0.5"
-            />
-            <path
-              d="M16 4.5 A11.5 11.5 0 0 1 27.5 16"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-            />
-          </svg>
-        </div>
       </header>
 
       {!src && (

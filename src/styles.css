@@ -170,35 +170,13 @@
   text-shadow: var(--text-shadow-soft);
 }
 
-/* Atmospheric layers belong exclusively to the pre-upload landing view. */
+/* Use the supplied artwork unchanged, exclusively on the pre-upload landing. */
 .lumen-landing {
-  background:
-    radial-gradient(ellipse at 50% 112%, oklch(0.82 0.12 220 / 65%), transparent 48%),
-    radial-gradient(ellipse at 82% 90%, oklch(0.6 0.17 240 / 55%), transparent 50%),
-    radial-gradient(ellipse at 15% 95%, oklch(0.48 0.23 270 / 48%), transparent 48%),
-    radial-gradient(circle at 50% 65%, oklch(0.55 0.18 240 / 35%), transparent 60%),
-    radial-gradient(ellipse at 50% 80%, oklch(0.35 0.12 280 / 25%), transparent 70%),
-    oklch(0.1 0.005 260);
-}
-
-.lumen-landing-grid {
-  background: repeating-linear-gradient(
-    90deg,
-    transparent 0,
-    transparent calc(100% / 12 - 1px),
-    oklch(1 0 0 / 4%) calc(100% / 12 - 1px),
-    oklch(1 0 0 / 4%) calc(100% / 12)
-  );
-  mask-image: linear-gradient(transparent 5%, black 45%, black 85%, transparent);
-}
-
-.lumen-landing-waves {
-  filter: drop-shadow(0 0 6px oklch(0.7 0.15 230 / 20%));
-}
-
-.lumen-landing-emblem {
-  color: oklch(0.9 0.05 220);
-  filter: drop-shadow(0 0 7px oklch(0.7 0.15 230 / 40%));
+  background-color: oklch(0.1 0.005 260);
+  background-image: url("/hero-bg.png");
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 .lumen-landing-dot {
