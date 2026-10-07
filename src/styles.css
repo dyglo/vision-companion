@@ -169,3 +169,51 @@
 @utility text-soft-shadow {
   text-shadow: var(--text-shadow-soft);
 }
+
+:root {
+  --canvas: oklch(0.105 0.004 260);
+  --secondary: oklch(0.23 0.005 260);
+  --secondary-foreground: var(--foreground);
+  --accent: oklch(0.25 0.005 260);
+  --accent-foreground: var(--foreground);
+  --destructive: oklch(0.78 0.14 25);
+  --ring: var(--primary);
+}
+@theme inline {
+  --color-canvas: var(--canvas);
+}
+.workspace {
+  display: grid;
+  grid-template-columns: clamp(360px, 38%, 500px) minmax(0, 1fr);
+  height: var(--workspace-height, 100dvh);
+  overflow: hidden;
+}
+.thread-panel {
+  border-right: 1px solid var(--border);
+}
+.composer {
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+@media (max-width: 767px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(140px, 45%) minmax(0, 1fr);
+  }
+  .canvas-panel {
+    grid-row: 1;
+  }
+  .thread-panel {
+    grid-row: 2;
+    border-right: none;
+    border-top: 1px solid var(--border);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
