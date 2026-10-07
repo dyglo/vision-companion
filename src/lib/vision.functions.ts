@@ -4,8 +4,22 @@ import { z } from "zod";
 const Input = z.object({
   image: z.string().max(4_000_000),
   crop: z.string().max(2_000_000),
+  mode: z.enum(["selection", "scene"]),
   detectorLabel: z.string().nullable(),
   detectorScore: z.number().nullable(),
+  detectorCandidates: z
+    .array(
+      z.object({
+        id: z.number().int(),
+        label: z.string(),
+        score: z.number(),
+        x: z.number(),
+        y: z.number(),
+        w: z.number(),
+        h: z.number(),
+      }),
+    )
+    .max(40),
   question: z.string().max(1000).nullable(),
   previous: z.string().max(4000).nullable(),
   memories: z.array(z.string().max(300)).max(50),
@@ -18,12 +32,28 @@ export type VisionAnswer = {
   explanation: string;
   nextSteps: string[];
   suggestedMemory: string | null;
+  annotations: Array<{
+    label: string;
+    confidence: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }>;
 };
 
 const schema = {
   type: "object",
   additionalProperties: false,
-  required: ["name", "confidence", "headline", "explanation", "nextSteps", "suggestedMemory"],
+  required: [
+    "name",
+    "confidence",
+    "headline",
+    "explanation",
+    "nextSteps",
+    "suggestedMemory",
+    "annotations",
+  ],
   properties: {
     name: { type: "string" },
     confidence: { type: "number" },
@@ -31,11 +61,29 @@ const schema = {
     explanation: { type: "string" },
     nextSteps: { type: "array", items: { type: "string" } },
     suggestedMemory: { type: ["string", "null"] },
+    annotations: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["label", "confidence", "x", "y", "w", "h"],
+        properties: {
+          label: { type: "string" },
+          confidence: { type: "number" },
+          x: { type: "number" },
+          y: { type: "number" },
+          w: { type: "number" },
+          h: { type: "number" },
+        },
+      },
+    },
   },
 };
 
-const SYSTEM = `You are a calm, practical vision assistant. The user tapped a spot in their photo. You receive the full photo and a close-up crop of the tapped area, plus an optional on-device detector guess (which only knows ~80 common classes and may be wrong).
-Identify the tapped object. Be honest: confidence is 0..1; if below 0.7, say so plainly in the headline (e.g. "Probably a pear — I'm not fully sure.").
+const SYSTEM = `You are a calm, practical vision assistant. You receive a full photo, an optional close-up, and on-device detector candidates. The detector only knows about 80 common classes and may be wrong.
+In selection mode, identify and explain the tapped object. In scene mode, answer the user's request about the entire photo. If they ask to find, show, count, or label objects, return one annotation for EVERY visible matching object, not only detector matches.
+Annotations use normalized full-image coordinates from 0 to 1, with x/y at the top-left. Prefer the supplied detector candidate coordinates when they match. Estimate coordinates directly from the image for missed objects. Return no unrelated annotations and no more than 20.
+Be honest: confidence is 0..1; if below 0.7, say so plainly in the headline (e.g. "Probably a pear — I'm not fully sure.").
 headline: one short sentence. explanation: 2–3 sentences on what it is / how it works. nextSteps: up to 3 short practical actions.
 If the user asks a follow-up question, answer it in explanation (can be longer, plain prose) and keep headline short.
 Use the user's saved memories when relevant and mention it naturally. suggestedMemory: a short first-person-about-the-user fact worth remembering (e.g. "Owns a Breville espresso machine"), only if genuinely useful and not already saved; otherwise null.`;
@@ -49,7 +97,13 @@ export const askVision = createServerFn({ method: "POST" })
       data.detectorLabel
         ? `Detector guess: "${data.detectorLabel}" (${Math.round((data.detectorScore ?? 0) * 100)}%).`
         : "Detector found nothing at this spot.",
-      data.memories.length ? `Saved memories about the user:\n- ${data.memories.join("\n- ")}` : "No saved memories.",
+      `Mode: ${data.mode}.`,
+      data.detectorCandidates.length
+        ? `Detector candidates (normalized full-image boxes):\n${JSON.stringify(data.detectorCandidates)}`
+        : "No detector candidates are available.",
+      data.memories.length
+        ? `Saved memories about the user:\n- ${data.memories.join("\n- ")}`
+        : "No saved memories.",
       data.previous ? `Your previous answer about this object: ${data.previous}` : "",
       data.question ? `User question: ${data.question}` : "Explain the tapped object.",
     ].join("\n");
@@ -66,7 +120,8 @@ export const askVision = createServerFn({ method: "POST" })
         instructions: SYSTEM,
         stream: true,
         store: false,
-        reasoning: { effort: "low" },
+        reasoning: { effort: "low", summary: "auto" },
+        include: ["reasoning.encrypted_content"],
         text: { format: { type: "json_schema", name: "answer", strict: true, schema } },
         input: [
           {
@@ -83,7 +138,8 @@ export const askVision = createServerFn({ method: "POST" })
     if (!res.ok || !res.body) {
       const t = await res.text().catch(() => "");
       console.error("AI error", res.status, t);
-      if (res.status === 429) return { error: "Too many requests right now. Try again in a moment." };
+      if (res.status === 429)
+        return { error: "Too many requests right now. Try again in a moment." };
       if (res.status === 402) return { error: "AI credits are used up for this workspace." };
       return { error: "The assistant couldn't look at this right now." };
     }

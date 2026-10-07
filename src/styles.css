@@ -141,11 +141,15 @@
   --border: oklch(1 0 0 / 18%);
   --input: oklch(1 0 0 / 25%);
   --scrim: oklch(0 0 0 / 0.45);
+  --scrim-strong: oklch(0 0 0 / 0.78);
+  --scrim-soft: oklch(0 0 0 / 0.16);
   --text-shadow-soft: 0 1px 12px oklch(0 0 0 / 0.55);
 }
 
 @theme inline {
   --color-scrim: var(--scrim);
+  --color-scrim-strong: var(--scrim-strong);
+  --color-scrim-soft: var(--scrim-soft);
   --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
 }
 
