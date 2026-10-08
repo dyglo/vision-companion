@@ -591,9 +591,19 @@ export function Index() {
           },
     );
   };
+  const detectionMarkers: Marker[] = detections.map((item, index) => ({
+    key: `candidate:${index}`,
+    number: index + 1,
+    box: { x: item.x, y: item.y, w: item.w, h: item.h },
+    label: item.label,
+    score: item.score,
+  }));
   const markers = [
     ...new Map(
-      [...toolMarkers, ...conversationMarkers(thread)].map((marker) => [marker.key, marker]),
+      [...detectionMarkers, ...toolMarkers, ...conversationMarkers(thread)].map((marker) => [
+        marker.key,
+        marker,
+      ]),
     ).values(),
   ].filter(
     (marker) =>
@@ -695,7 +705,7 @@ export function Index() {
             onHighlight={setHighlighted}
             onMarker={toolSelect}
             onTap={(x, y) => void toolTap(x, y)}
-            onLoad={() => {}}
+            onLoad={() => void ensureDetections()}
             fullView={fullView}
             onFullView={toggleFullView}
             onNew={() => fileRef.current?.click()}
