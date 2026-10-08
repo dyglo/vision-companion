@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import {
   ArrowUp,
   Crosshair,
+  Download,
   ImagePlus,
   ScanLine,
   Maximize2,
@@ -227,6 +228,57 @@ export function CanvasPanel({
             }}
           >
             <Crosshair />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            aria-label="Download annotated image"
+            title="Download annotated image"
+            onClick={() => {
+              const image = imageRef.current;
+              if (!image?.naturalWidth) return;
+              const W = image.naturalWidth,
+                H = image.naturalHeight;
+              const c = document.createElement("canvas");
+              c.width = W;
+              c.height = H;
+              const ctx = c.getContext("2d");
+              if (!ctx) return;
+              ctx.drawImage(image, 0, 0, W, H);
+              const unit = Math.max(2, Math.round(Math.max(W, H) / 400));
+              const styles = getComputedStyle(host.current ?? document.documentElement);
+              ctx.font = `600 ${unit * 7}px Geist, sans-serif`;
+              ctx.textBaseline = "top";
+              for (const m of markers) {
+                const raw = markerColor(m.label).match(/--[\w-]+/)?.[0] ?? "";
+                const color = (raw && styles.getPropertyValue(raw).trim()) || "currentColor";
+                const x = m.box.x * W,
+                  y = m.box.y * H;
+                ctx.strokeStyle = color;
+                ctx.lineWidth = unit;
+                ctx.strokeRect(x, y, m.box.w * W, m.box.h * H);
+                const text = `${m.number} ${m.label}${m.score ? ` ${Math.round(m.score * 100)}%` : ""}`;
+                const tw = ctx.measureText(text).width + unit * 4;
+                const th = unit * 10;
+                const ty = y - th >= 0 ? y - th : y;
+                ctx.fillStyle = color;
+                ctx.fillRect(x, ty, tw, th);
+                ctx.fillStyle = styles.getPropertyValue("--canvas").trim() || "#000";
+                ctx.fillText(text, x + unit * 2, ty + unit * 1.5);
+              }
+              c.toBlob((blob) => {
+                if (!blob) return;
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "lumen-annotated.png";
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+              }, "image/png");
+            }}
+          >
+            <Download />
           </Button>
           <Button
             variant="ghost"
